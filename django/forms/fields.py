@@ -499,6 +499,12 @@ class DateField(BaseTemporalField):
         return super().to_python(value)
 
     def strptime(self, value, format):
+        if format == "%Y-%m-%d":
+            try:
+                return datetime.date.fromisoformat(value)
+            except ValueError:
+                pass
+
         return datetime.datetime.strptime(value, format).date()
 
 
