@@ -350,7 +350,7 @@ class IntegerField(Field):
 
     def widget_attrs(self, widget):
         attrs = super().widget_attrs(widget)
-        if isinstance(widget, NumberInput):
+        if type(widget) is NumberInput:
             if self.min_value is not None:
                 attrs["min"] = self.min_value
             if self.max_value is not None:
@@ -390,7 +390,7 @@ class FloatField(IntegerField):
 
     def widget_attrs(self, widget):
         attrs = super().widget_attrs(widget)
-        if isinstance(widget, NumberInput) and "step" not in widget.attrs:
+        if type(widget) is NumberInput and "step" not in widget.attrs:
             if self.step_size is not None:
                 step = str(self.step_size)
             else:
