@@ -256,12 +256,23 @@ class Expressions(TableColumns):
     def rename_column_references(self, table, old_column, new_column):
         if self.table != table:
             return
-        expressions = deepcopy(self.expressions)
-        self.columns = []
-        for col in self.compiler.query._gen_cols([expressions]):
+
+        # Optimize copy operation for common types
+        expr_type = type(self.expressions)
+        if expr_type in (list, dict, set):
+            expressions = self.expressions.copy()
+        else:
+            expressions = deepcopy(self.expressions)
+
+        # Cache frequently accessed attributes
+        gen_cols = self.compiler.query._gen_cols
+        columns = self.columns
+
+        columns.clear()
+        for col in gen_cols([expressions]):
             if col.target.column == old_column:
                 col.target.column = new_column
-            self.columns.append(col.target.column)
+            columns.append(col.target.column)
         self.expressions = expressions
 
     def __str__(self):
