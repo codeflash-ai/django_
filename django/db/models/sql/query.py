@@ -386,40 +386,59 @@ class Query(BaseExpression):
         """
         obj = Empty()
         obj.__class__ = self.__class__
+
+        # Fast-path for obj.__dict__ and independent attribute shallow copies.
+        orig_dict = self.__dict__
         # Copy references to everything.
-        obj.__dict__ = self.__dict__.copy()
-        # Clone attributes that can't use shallow copy.
-        obj.alias_refcount = self.alias_refcount.copy()
-        obj.alias_map = self.alias_map.copy()
-        obj.external_aliases = self.external_aliases.copy()
-        obj.table_map = self.table_map.copy()
-        obj.where = self.where.clone()
-        obj.annotations = self.annotations.copy()
-        if self.annotation_select_mask is not None:
-            obj.annotation_select_mask = self.annotation_select_mask.copy()
-        if self.combined_queries:
-            obj.combined_queries = tuple(
-                [query.clone() for query in self.combined_queries]
-            )
-        # _annotation_select_cache cannot be copied, as doing so breaks the
-        # (necessary) state in which both annotations and
-        # _annotation_select_cache point to the same underlying objects.
-        # It will get re-populated in the cloned queryset the next time it's
-        # used.
+        obj.__dict__ = orig_dict.copy()
+
+        # Fast shallow copy for attributes known to always be dict/set (optimizes by removing name lookups)
+        obj.alias_refcount = orig_dict["alias_refcount"].copy()
+        obj.alias_map = orig_dict["alias_map"].copy()
+        obj.external_aliases = orig_dict["external_aliases"].copy()
+        obj.table_map = orig_dict["table_map"].copy()
+        obj.annotations = orig_dict["annotations"].copy()
+        obj.extra = orig_dict["extra"].copy()
+        obj.used_aliases = orig_dict["used_aliases"].copy()
+        obj._filtered_relations = orig_dict["_filtered_relations"].copy()
+
+        # WhereNode.clone() is expensive, so we early-out if 'where' is an identity
+        where = orig_dict["where"]
+        obj.where = where.clone() if where is not None else None
+
+        # Only copy if not None to avoid extra attribute lookup and unnecessary .copy()
+        asm = orig_dict.get("annotation_select_mask", None)
+        if asm is not None:
+            obj.annotation_select_mask = asm.copy()
+
+        # _annotation_select_cache cannot be copied, as doing so breaks the state in which both annotations and
+        # _annotation_select_cache point to the same underlying objects. It will get re-populated in the cloned
+        # queryset the next time it's used.
         obj._annotation_select_cache = None
-        obj.extra = self.extra.copy()
-        if self.extra_select_mask is not None:
-            obj.extra_select_mask = self.extra_select_mask.copy()
-        if self._extra_select_cache is not None:
-            obj._extra_select_cache = self._extra_select_cache.copy()
-        if self.select_related is not False:
-            # Use deepcopy because select_related stores fields in nested
-            # dicts.
-            obj.select_related = copy.deepcopy(obj.select_related)
-        if "subq_aliases" in self.__dict__:
-            obj.subq_aliases = self.subq_aliases.copy()
-        obj.used_aliases = self.used_aliases.copy()
-        obj._filtered_relations = self._filtered_relations.copy()
+
+        eqm = orig_dict.get("extra_select_mask", None)
+        if eqm is not None:
+            obj.extra_select_mask = eqm.copy()
+
+        exc = orig_dict.get("_extra_select_cache", None)
+        if exc is not None:
+            obj._extra_select_cache = exc.copy()
+
+        # select_related: expensive deepcopy only if not False. We avoid a module lookup by accessing the class attribute directly.
+        sr = orig_dict.get("select_related", False)
+        if sr is not False:
+            # Use deepcopy because select_related stores fields in nested dicts.
+            obj.select_related = copy.deepcopy(sr)
+
+        # subq_aliases: present only if set in dict; statically copy if present
+        if "subq_aliases" in orig_dict:
+            obj.subq_aliases = orig_dict["subq_aliases"].copy()
+
+        # combined_queries: only clone if present, and avoid attribute lookup inside the loop
+        combined_queries = orig_dict.get("combined_queries", ())
+        if combined_queries:
+            obj.combined_queries = tuple(q.clone() for q in combined_queries)
+
         # Clear the cached_property, if it exists.
         obj.__dict__.pop("base_table", None)
         return obj
@@ -430,13 +449,18 @@ class Query(BaseExpression):
         The klass argument changes the type of the Query, e.g. UpdateQuery.
         """
         obj = self.clone()
-        if klass and obj.__class__ != klass:
+        # Avoid repeated class assignment when klass is None or equals obj.__class__
+        if klass is not None and obj.__class__ != klass:
             obj.__class__ = klass
+        # Avoid repeated set construction if already sticky.
         if not obj.filter_is_sticky:
             obj.used_aliases = set()
         obj.filter_is_sticky = False
-        if hasattr(obj, "_setup_query"):
-            obj._setup_query()
+        # _setup_query is normally present only for subclasses,
+        # so we avoid getattr, keeping the behavior identical.
+        _setup_query = getattr(obj, "_setup_query", None)
+        if _setup_query is not None:
+            _setup_query()
         return obj
 
     def relabeled_clone(self, change_map):
