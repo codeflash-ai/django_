@@ -69,14 +69,16 @@ def method_decorator(decorator, name=""):
     # defined on. If 'obj' is a class, the 'name' is required to be the name
     # of the method that will be decorated.
     def _dec(obj):
+        # Fast path: If it's not a class, just decorate directly
         if not isinstance(obj, type):
             return _multi_decorate(decorator, obj)
-        if not (name and hasattr(obj, name)):
+        # For class, name is required; check method existence and callability
+        method = getattr(obj, name, None)
+        if method is None:
             raise ValueError(
                 "The keyword argument `name` must be the name of a method "
                 "of the decorated class: %s. Got '%s' instead." % (obj, name)
             )
-        method = getattr(obj, name)
         if not callable(method):
             raise TypeError(
                 "Cannot decorate '%s' as it isn't a callable attribute of "
@@ -86,13 +88,14 @@ def method_decorator(decorator, name=""):
         setattr(obj, name, _wrapper)
         return obj
 
-    # Don't worry about making _dec look similar to a list/tuple as it's rather
-    # meaningless.
+    # Avoid repeated attribute lookups and string formatting
+    dec_has_name = hasattr(decorator, "__name__")
+    dec_name = decorator.__name__ if dec_has_name else decorator.__class__.__name__
+    # Avoid __class__ when not needed.
     if not hasattr(decorator, "__iter__"):
         update_wrapper(_dec, decorator)
-    # Change the name to aid debugging.
-    obj = decorator if hasattr(decorator, "__name__") else decorator.__class__
-    _dec.__name__ = "method_decorator(%s)" % obj.__name__
+    # Precompute name string
+    _dec.__name__ = f"method_decorator({dec_name})"
     return _dec
 
 
