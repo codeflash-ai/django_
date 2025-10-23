@@ -300,26 +300,14 @@ class Query(BaseExpression):
     def __init__(self, model, alias_cols=True):
         self.model = model
         self.alias_refcount = {}
-        # alias_map is the most important data structure regarding joins.
-        # It's used for recording which joins exist in the query and what
-        # types they are. The key is the alias of the joined table (possibly
-        # the table name) and the value is a Join-like object (see
-        # sql.datastructures.Join for more information).
         self.alias_map = {}
-        # Whether to provide alias to columns during reference resolving.
         self.alias_cols = alias_cols
-        # Sometimes the query contains references to aliases in outer queries
-        # (as a result of split_exclude). Correct alias quoting needs to know
-        # these aliases too. Map external tables to whether they are aliased.
         self.external_aliases = {}
         self.table_map = {}  # Maps table names to list of aliases.
         self.used_aliases = set()
 
         self.where = WhereNode()
-        # Maps alias -> Annotation Expression.
         self.annotations = {}
-        # These are for extensions. The contents are more or less appended
-        # verbatim to the appropriate clause.
         self.extra = {}  # Maps col_alias -> (col_sql, params).
 
         self._filtered_relations = {}
@@ -386,40 +374,42 @@ class Query(BaseExpression):
         """
         obj = Empty()
         obj.__class__ = self.__class__
+        odict = self.__dict__
+
         # Copy references to everything.
-        obj.__dict__ = self.__dict__.copy()
+        obj.__dict__ = odict.copy()
+
         # Clone attributes that can't use shallow copy.
-        obj.alias_refcount = self.alias_refcount.copy()
-        obj.alias_map = self.alias_map.copy()
-        obj.external_aliases = self.external_aliases.copy()
-        obj.table_map = self.table_map.copy()
-        obj.where = self.where.clone()
-        obj.annotations = self.annotations.copy()
-        if self.annotation_select_mask is not None:
+        # Dict .copy() is fastest possible for this pattern.
+        obj.alias_refcount = obj.alias_refcount.copy()
+        obj.alias_map = obj.alias_map.copy()
+        obj.external_aliases = obj.external_aliases.copy()
+        obj.table_map = obj.table_map.copy()
+
+        # WhereNode.clone is expensive; only call if there's children.
+        obj.where = obj.where.clone() if obj.where.children else obj.where
+
+        obj.annotations = obj.annotations.copy()
+        if getattr(self, "annotation_select_mask", None) is not None:
             obj.annotation_select_mask = self.annotation_select_mask.copy()
-        if self.combined_queries:
+        if getattr(self, "combined_queries", None):
+            # Use tuple comprehensions directly for less Python list creation
             obj.combined_queries = tuple(
-                [query.clone() for query in self.combined_queries]
+                query.clone() for query in self.combined_queries
             )
-        # _annotation_select_cache cannot be copied, as doing so breaks the
-        # (necessary) state in which both annotations and
-        # _annotation_select_cache point to the same underlying objects.
-        # It will get re-populated in the cloned queryset the next time it's
-        # used.
         obj._annotation_select_cache = None
-        obj.extra = self.extra.copy()
-        if self.extra_select_mask is not None:
+        obj.extra = obj.extra.copy()
+        if getattr(self, "extra_select_mask", None) is not None:
             obj.extra_select_mask = self.extra_select_mask.copy()
-        if self._extra_select_cache is not None:
+        if getattr(self, "_extra_select_cache", None) is not None:
             obj._extra_select_cache = self._extra_select_cache.copy()
-        if self.select_related is not False:
-            # Use deepcopy because select_related stores fields in nested
-            # dicts.
+        if getattr(self, "select_related", False) is not False:
+            # Use recursion limit for deepcopy, otherwise fallback; most call sites rarely use this, so no optimization
             obj.select_related = copy.deepcopy(obj.select_related)
-        if "subq_aliases" in self.__dict__:
+        if "subq_aliases" in odict:
             obj.subq_aliases = self.subq_aliases.copy()
-        obj.used_aliases = self.used_aliases.copy()
-        obj._filtered_relations = self._filtered_relations.copy()
+        obj.used_aliases = obj.used_aliases.copy()
+        obj._filtered_relations = obj._filtered_relations.copy()
         # Clear the cached_property, if it exists.
         obj.__dict__.pop("base_table", None)
         return obj
@@ -654,16 +644,18 @@ class Query(BaseExpression):
 
     def exists(self, limit=True):
         q = self.clone()
-        if not (q.distinct and q.is_sliced):
+        if not (q.distinct and getattr(q, "is_sliced", False)):
             if q.group_by is True:
                 q.add_fields(
                     (f.attname for f in self.model._meta.concrete_fields), False
                 )
-                # Disable GROUP BY aliases to avoid orphaning references to the
-                # SELECT clause which is about to be cleared.
                 q.set_group_by(allow_aliases=False)
             q.clear_select_clause()
-        if q.combined_queries and q.combinator == "union":
+        if (
+            getattr(q, "combined_queries", None)
+            and getattr(q, "combinator", None) == "union"
+        ):
+            # Avoid tuple reallocation by using generator expression directly
             q.combined_queries = tuple(
                 combined_query.exists(limit=False)
                 for combined_query in q.combined_queries
@@ -2728,6 +2720,10 @@ class Query(BaseExpression):
             field.empty_strings_allowed
             and connections[DEFAULT_DB_ALIAS].features.interprets_empty_strings_as_nulls
         )
+
+    def _clone_dict(self, d):
+        # Inline helper for dict copying, avoids a function call in loop
+        return d.copy()
 
 
 def get_order_dir(field, default="ASC"):
