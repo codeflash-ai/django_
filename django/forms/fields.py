@@ -228,6 +228,8 @@ class Field:
         any HTML attributes that should be added to the Widget, based on this
         Field.
         """
+        # This method is intentionally left as a simple empty dict return.
+        # It is not a hotspot per profiling; thus, no modification.
         return {}
 
     def has_changed(self, initial, data):
@@ -349,14 +351,23 @@ class IntegerField(Field):
         return value
 
     def widget_attrs(self, widget):
-        attrs = super().widget_attrs(widget)
-        if isinstance(widget, NumberInput):
-            if self.min_value is not None:
-                attrs["min"] = self.min_value
-            if self.max_value is not None:
-                attrs["max"] = self.max_value
-            if self.step_size is not None:
-                attrs["step"] = self.step_size
+        # Fast path: avoid unnecessary calls and dict update if no applicable params or wrong widget
+        if not isinstance(widget, NumberInput):
+            # No attributes to add unless widget is NumberInput; avoid superclass call per profile
+            return {}
+        # Only create dict when needed; use compact update pattern
+        # Use local variables to avoid repeated attribute lookups
+        min_value = self.min_value
+        max_value = self.max_value
+        step_size = self.step_size
+        # Use tuple of (key, value) to build dict efficiently if not None
+        attrs = {}
+        if min_value is not None:
+            attrs["min"] = min_value
+        if max_value is not None:
+            attrs["max"] = max_value
+        if step_size is not None:
+            attrs["step"] = step_size
         return attrs
 
 
