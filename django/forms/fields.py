@@ -561,6 +561,14 @@ class DateTimeField(BaseTemporalField):
         return from_current_timezone(result)
 
     def strptime(self, value, format):
+        if format == "%Y-%m-%d %H:%M:%S":
+            try:
+                date_str, time_str = value.split(" ")
+                y, m, d = date_str.split("-")
+                H, M, S = time_str.split(":")
+                return datetime.datetime(int(y), int(m), int(d), int(H), int(M), int(S))
+            except (ValueError, AttributeError):
+                pass
         return datetime.datetime.strptime(value, format)
 
 
