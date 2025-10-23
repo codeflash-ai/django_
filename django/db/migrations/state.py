@@ -545,22 +545,23 @@ class ProjectState:
     def _get_concrete_models_mapping_and_proxy_models(self):
         concrete_models_mapping = {}
         proxy_models = {}
+        resolved = {}
         # Split models to proxy and concrete models.
         for model_key, model_state in self.models.items():
             if model_state.options.get("proxy"):
                 proxy_models[model_key] = model_state
-                # Find a concrete model for the proxy.
-                concrete_models_mapping[model_key] = (
-                    self._find_concrete_model_from_proxy(
-                        proxy_models,
-                        model_state,
+                # Find a concrete model for the proxy with memoization.
+                if model_key not in resolved:
+                    resolved[model_key] = self._find_concrete_model_from_proxy_memoized(
+                        proxy_models, model_state, resolved
                     )
-                )
+                concrete_models_mapping[model_key] = resolved[model_key]
             else:
                 concrete_models_mapping[model_key] = model_key
         return concrete_models_mapping, proxy_models
 
     def _find_concrete_model_from_proxy(self, proxy_models, model_state):
+        # Legacy single-walk version, kept for API/behavior preservation if called directly
         for base in model_state.bases:
             if not (isinstance(base, str) or issubclass(base, models.Model)):
                 continue
@@ -601,6 +602,22 @@ class ProjectState:
 
     def __eq__(self, other):
         return self.models == other.models and self.real_apps == other.real_apps
+
+    def _find_concrete_model_from_proxy_memoized(
+        self, proxy_models, model_state, resolved
+    ):
+        for base in model_state.bases:
+            if not (isinstance(base, str) or issubclass(base, models.Model)):
+                continue
+            base_key = make_model_tuple(base)
+            base_state = proxy_models.get(base_key)
+            if not base_state:
+                return base_key
+            if base_key not in resolved:
+                resolved[base_key] = self._find_concrete_model_from_proxy_memoized(
+                    proxy_models, base_state, resolved
+                )
+            return resolved[base_key]
 
 
 class AppConfigStub(AppConfig):
