@@ -322,14 +322,13 @@ class IntegerField(Field):
             kwargs.setdefault("widget", super().widget)
         super().__init__(**kwargs)
 
+        validator_append = self.validators.append
         if max_value is not None:
-            self.validators.append(validators.MaxValueValidator(max_value))
+            validator_append(validators.MaxValueValidator(max_value))
         if min_value is not None:
-            self.validators.append(validators.MinValueValidator(min_value))
+            validator_append(validators.MinValueValidator(min_value))
         if step_size is not None:
-            self.validators.append(
-                validators.StepValueValidator(step_size, offset=min_value)
-            )
+            validator_append(validators.StepValueValidator(step_size, offset=min_value))
 
     def to_python(self, value):
         """
@@ -350,13 +349,18 @@ class IntegerField(Field):
 
     def widget_attrs(self, widget):
         attrs = super().widget_attrs(widget)
-        if isinstance(widget, NumberInput):
-            if self.min_value is not None:
-                attrs["min"] = self.min_value
-            if self.max_value is not None:
-                attrs["max"] = self.max_value
-            if self.step_size is not None:
-                attrs["step"] = self.step_size
+        if type(widget) is NumberInput:
+            min_value, max_value, step_size = (
+                self.min_value,
+                self.max_value,
+                self.step_size,
+            )
+            if min_value is not None:
+                attrs["min"] = min_value
+            if max_value is not None:
+                attrs["max"] = max_value
+            if step_size is not None:
+                attrs["step"] = step_size
         return attrs
 
 
@@ -447,7 +451,7 @@ class DecimalField(IntegerField):
 
     def widget_attrs(self, widget):
         attrs = super().widget_attrs(widget)
-        if isinstance(widget, NumberInput) and "step" not in widget.attrs:
+        if type(widget) is NumberInput and "step" not in widget.attrs:
             if self.decimal_places is not None:
                 # Use exponential notation for small values since they might
                 # be parsed as 0 otherwise. ref #20765
