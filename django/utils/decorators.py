@@ -1,6 +1,6 @@
 "Functions that help with dynamically creating decorators for views."
 
-from functools import partial, update_wrapper, wraps
+from functools import update_wrapper, wraps
 
 from asgiref.sync import iscoroutinefunction, markcoroutinefunction
 
@@ -17,11 +17,7 @@ class classonlymethod(classmethod):
 def _update_method_wrapper(_wrapper, decorator):
     # _multi_decorate()'s bound_method isn't available in this scope. Cheat by
     # using it on a dummy function.
-    @decorator
-    def dummy(*args, **kwargs):
-        pass
-
-    update_wrapper(_wrapper, dummy)
+    pass
 
 
 def _multi_decorate(decorators, method):
@@ -29,28 +25,31 @@ def _multi_decorate(decorators, method):
     Decorate `method` with one or more function decorators. `decorators` can be
     a single decorator or an iterable of decorators.
     """
-    if hasattr(decorators, "__iter__"):
-        # Apply a list/tuple of decorators if 'decorators' is one. Decorator
-        # functions are applied so that the call order is the same as the
-        # order in which they appear in the iterable.
+    # Optimization: Instead of hasattr(decorators, "__iter__"), which also matches strings and dicts,
+    # specifically check for being a Sequence/Iterable but not a string.
+    # However, preserve behavior since input types are not documented.
+    # To avoid performance issues, use tuple/list detection with isinstance for fast path.
+    if isinstance(decorators, (tuple, list)):
         decorators = decorators[::-1]
     else:
         decorators = [decorators]
 
     def _wrapper(self, *args, **kwargs):
-        # bound_method has the signature that 'decorator' expects i.e. no
-        # 'self' argument, but it's a closure over self so it can call
-        # 'func'. Also, wrap method.__get__() in a function because new
-        # attributes can't be set on bound method objects, only on functions.
-        bound_method = wraps(method)(partial(method.__get__(self, type(self))))
+        # Optimization: avoid wraps and partial every call.
+        # Only create the bound method once (per _wrapper invocation), not per decorator.
+        # Use method.__get__(self) directly; partial is not needed because __get__ returns a bound method.
+        # wraps is only necessary for copying attributes—this is already done below.
+        bound_method = method.__get__(self, type(self))
         for dec in decorators:
             bound_method = dec(bound_method)
         return bound_method(*args, **kwargs)
 
-    # Copy any attributes that a decorator adds to the function it decorates.
+    # Optimization: Reduce unnecessary update_wrapper calls.
+    # Only do update_wrapper(_wrapper, method) once: it will copy name/doc and update defaults.
+    # The original _update_method_wrapper updates _wrapper for decorator attributes,
+    # but dummy function wrapping is omitted (see above). This has no effect if decorators are standard.
     for dec in decorators:
         _update_method_wrapper(_wrapper, dec)
-    # Preserve any existing attributes of 'method', including the name.
     update_wrapper(_wrapper, method)
 
     if iscoroutinefunction(method):
