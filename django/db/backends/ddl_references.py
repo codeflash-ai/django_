@@ -75,9 +75,11 @@ class TableColumns(Table):
     def __init__(self, table, columns):
         self.table = table
         self.columns = columns
+        # Cache columns as a set for O(1) lookup in references_column
+        self._columns_set = set(columns)
 
     def references_column(self, table, column):
-        return self.table == table and column in self.columns
+        return self.table == table and column in self._columns_set
 
     def rename_column_references(self, table, old_column, new_column):
         if self.table == table:
@@ -171,9 +173,10 @@ class ForeignKeyName(TableColumns):
         )
 
     def references_column(self, table, column):
-        return super().references_column(
-            table, column
-        ) or self.to_reference.references_column(table, column)
+        # Inline method call for slightly reduced call overhead
+        if self.table == table and column in self._columns_set:
+            return True
+        return self.to_reference.references_column(table, column)
 
     def rename_table_references(self, old_table, new_table):
         super().rename_table_references(old_table, new_table)
