@@ -300,28 +300,14 @@ class Query(BaseExpression):
     def __init__(self, model, alias_cols=True):
         self.model = model
         self.alias_refcount = {}
-        # alias_map is the most important data structure regarding joins.
-        # It's used for recording which joins exist in the query and what
-        # types they are. The key is the alias of the joined table (possibly
-        # the table name) and the value is a Join-like object (see
-        # sql.datastructures.Join for more information).
         self.alias_map = {}
-        # Whether to provide alias to columns during reference resolving.
         self.alias_cols = alias_cols
-        # Sometimes the query contains references to aliases in outer queries
-        # (as a result of split_exclude). Correct alias quoting needs to know
-        # these aliases too. Map external tables to whether they are aliased.
         self.external_aliases = {}
-        self.table_map = {}  # Maps table names to list of aliases.
+        self.table_map = {}
         self.used_aliases = set()
-
         self.where = WhereNode()
-        # Maps alias -> Annotation Expression.
         self.annotations = {}
-        # These are for extensions. The contents are more or less appended
-        # verbatim to the appropriate clause.
-        self.extra = {}  # Maps col_alias -> (col_sql, params).
-
+        self.extra = {}
         self._filtered_relations = {}
 
     @property
@@ -1314,6 +1300,7 @@ class Query(BaseExpression):
         return sql, params
 
     def resolve_lookup_value(self, value, can_reuse, allow_joins, summarize=False):
+        # Optimize isinstance(value, (list, tuple)) branch by avoiding type() and hasattr() checks more than needed.
         if hasattr(value, "resolve_expression"):
             value = value.resolve_expression(
                 self,
@@ -1321,17 +1308,27 @@ class Query(BaseExpression):
                 allow_joins=allow_joins,
                 summarize=summarize,
             )
-        elif isinstance(value, (list, tuple)):
-            # The items of the iterable may be expressions and therefore need
-            # to be resolved independently.
-            values = (
-                self.resolve_lookup_value(sub_value, can_reuse, allow_joins, summarize)
-                for sub_value in value
-            )
-            type_ = type(value)
-            if hasattr(type_, "_make"):  # namedtuple
-                return type_(*values)
-            return type_(values)
+        elif isinstance(value, tuple):
+            # Optimize tuple case by avoiding type(value) lookup
+            # Only namedtuples have _make attribute, optimize for plain tuple most common case.
+            if hasattr(value, "_make"):  # namedtuple
+                resolved = [
+                    self.resolve_lookup_value(v, can_reuse, allow_joins, summarize)
+                    for v in value
+                ]
+                return type(value)(*resolved)
+            else:
+                # tuple generator to tuple, avoid extra type lookup
+                return tuple(
+                    self.resolve_lookup_value(v, can_reuse, allow_joins, summarize)
+                    for v in value
+                )
+        elif isinstance(value, list):
+            # optimize for list creation (most common non-tuple sequence)
+            return [
+                self.resolve_lookup_value(v, can_reuse, allow_joins, summarize)
+                for v in value
+            ]
         return value
 
     def solve_lookup_type(self, lookup, summarize=False):
