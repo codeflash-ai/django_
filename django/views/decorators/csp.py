@@ -9,22 +9,28 @@ def _make_csp_decorator(config_attr_name, config_attr_value):
     if not isinstance(config_attr_value, dict):
         raise TypeError("CSP config should be a mapping.")
 
+    # Precompute function type decision for decorator creation
     def decorator(view_func):
-        @wraps(view_func)
-        async def _wrapped_async_view(request, *args, **kwargs):
-            response = await view_func(request, *args, **kwargs)
-            setattr(response, config_attr_name, config_attr_value)
-            return response
+        is_async = iscoroutinefunction(view_func)
+        if is_async:
+            # For async functions: avoid checking iscoroutinefunction per call
+            @wraps(view_func)
+            async def _wrapped_async_view(request, *args, **kwargs):
+                response = await view_func(request, *args, **kwargs)
+                # setattr is required here, keep unchanged
+                setattr(response, config_attr_name, config_attr_value)
+                return response
 
-        @wraps(view_func)
-        def _wrapped_sync_view(request, *args, **kwargs):
-            response = view_func(request, *args, **kwargs)
-            setattr(response, config_attr_name, config_attr_value)
-            return response
-
-        if iscoroutinefunction(view_func):
             return _wrapped_async_view
-        return _wrapped_sync_view
+        else:
+
+            @wraps(view_func)
+            def _wrapped_sync_view(request, *args, **kwargs):
+                response = view_func(request, *args, **kwargs)
+                setattr(response, config_attr_name, config_attr_value)
+                return response
+
+            return _wrapped_sync_view
 
     return decorator
 
