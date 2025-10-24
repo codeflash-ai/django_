@@ -468,10 +468,9 @@ class MultipleHiddenInput(HiddenInput):
 
     def value_from_datadict(self, data, files, name):
         try:
-            getter = data.getlist
+            return data.getlist(name)
         except AttributeError:
-            getter = data.get
-        return getter(name)
+            return data.get(name)
 
     def format_value(self, value):
         return [] if value is None else value
