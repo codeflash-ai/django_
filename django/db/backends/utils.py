@@ -338,5 +338,6 @@ def strip_quotes(table_name):
     names, sequence names, etc. For example '"USER"."TABLE"' (an Oracle naming
     scheme) becomes 'USER"."TABLE'.
     """
-    has_quotes = table_name.startswith('"') and table_name.endswith('"')
-    return table_name[1:-1] if has_quotes else table_name
+    if table_name and table_name[0] == '"' and table_name[-1] == '"':
+        return table_name[1:-1]
+    return table_name
