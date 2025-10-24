@@ -143,13 +143,16 @@ class Media:
         return self.merge(*self._js_lists)
 
     def render(self):
-        return mark_safe(
-            "\n".join(
-                chain.from_iterable(
-                    getattr(self, "render_" + name)() for name in MEDIA_TYPES
-                )
-            )
+        # Pre-fetch render methods for efficiency
+        renderers = (
+            getattr(self, "render_css"),
+            getattr(self, "render_js"),
         )
+        parts = []
+        for renderer in renderers:
+            # Each renderer returns an iterable
+            parts.extend(renderer())
+        return mark_safe("\n".join(parts))
 
     def render_js(self):
         return [
