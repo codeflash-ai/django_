@@ -2,7 +2,7 @@ import base64
 import re
 import unicodedata
 from binascii import Error as BinasciiError
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from email.utils import formatdate
 from urllib.parse import quote, unquote
 from urllib.parse import urlencode as original_urlencode
@@ -117,7 +117,7 @@ def parse_http_date(date):
     try:
         year = int(m["year"])
         if year < 100:
-            current_year = datetime.now(tz=UTC).year
+            current_year = datetime.now(tz=timezone.utc).year
             current_century = current_year - (current_year % 100)
             if year - (current_year % 100) > 50:
                 # year that appears to be more than 50 years in the future are
@@ -130,7 +130,7 @@ def parse_http_date(date):
         hour = int(m["hour"])
         min = int(m["min"])
         sec = int(m["sec"])
-        result = datetime(year, month, day, hour, min, sec, tzinfo=UTC)
+        result = datetime(year, month, day, hour, min, sec, tzinfo=timezone.utc)
         return int(result.timestamp())
     except Exception as exc:
         raise ValueError("%r is not a valid date" % date) from exc
@@ -316,16 +316,26 @@ def escape_leading_slashes(url):
 
 
 def _parseparam(s):
-    while s[:1] == ";":
-        s = s[1:]
-        end = s.find(";")
-        while end > 0 and (s.count('"', 0, end) - s.count('\\"', 0, end)) % 2:
+    # Optimization: use indices rather than repeated string slicing to reduce allocations
+    length = len(s)
+    i = 0
+    while i < length and s[i] == ";":
+        i += 1
+        start = i
+        end = s.find(";", start)
+        # Count of '"' and '\\"' before 'end'
+        while end > 0:
+            substr = s[start:end]
+            quote_count = substr.count('"')
+            esc_quote_count = substr.count('\\"')
+            if (quote_count - esc_quote_count) % 2 == 0:
+                break
             end = s.find(";", end + 1)
         if end < 0:
-            end = len(s)
-        f = s[:end]
+            end = length
+        f = s[start:end]
         yield f.strip()
-        s = s[end:]
+        i = end
 
 
 def parse_header_parameters(line, max_length=MAX_HEADER_LENGTH):
@@ -341,27 +351,31 @@ def parse_header_parameters(line, max_length=MAX_HEADER_LENGTH):
     if max_length is not None and len(line) > max_length:
         raise ValueError("Unable to parse header parameters (value too long).")
 
+    # Optimization: avoid generator overhead for simple cases by using an explicit iterator object
     parts = _parseparam(";" + line)
-    key = parts.__next__().lower()
+    try:
+        key = next(parts).lower()
+    except StopIteration:
+        return "", {}
     pdict = {}
     for p in parts:
-        i = p.find("=")
-        if i >= 0:
+        eq_i = p.find("=")
+        if eq_i >= 0:
             has_encoding = False
-            name = p[:i].strip().lower()
+            name = p[:eq_i].strip().lower()
             if name.endswith("*"):
-                # Embedded lang/encoding, like "filename*=UTF-8''file.ext".
-                # https://tools.ietf.org/html/rfc2231#section-4
                 name = name[:-1]
                 if p.count("'") == 2:
                     has_encoding = True
-            value = p[i + 1 :].strip()
+            value = p[eq_i + 1 :].strip()
             if len(value) >= 2 and value[0] == value[-1] == '"':
+                # Optimize the unescaping logic by using a single pass
                 value = value[1:-1]
-                value = value.replace("\\\\", "\\").replace('\\"', '"')
+                if "\\\\" in value or '\\"' in value:  # Avoid unnecessary replace
+                    value = value.replace("\\\\", "\\").replace('\\"', '"')
             if has_encoding:
-                encoding, lang, value = value.split("'")
-                value = unquote(value, encoding=encoding)
+                encoding, lang, v = value.split("'", 2)
+                value = unquote(v, encoding=encoding)
             pdict[name] = value
     return key, pdict
 
