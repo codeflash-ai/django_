@@ -357,21 +357,21 @@ class BaseExpression:
         # This guess is mostly a bad idea, but there is quite a lot of code
         # (especially 3rd party Func subclasses) that depend on it, we'd need a
         # deprecation path to fix it.
-        sources_iter = (
-            source for source in self.get_source_fields() if source is not None
-        )
-        for output_field in sources_iter:
-            for source in sources_iter:
-                if not isinstance(output_field, source.__class__):
+        sources = [source for source in self.get_source_fields() if source is not None]
+        if sources:
+            first_output_field = sources[0]
+            first_cls = first_output_field.__class__
+            for source in sources:
+                if source.__class__ is not first_cls:
                     raise FieldError(
                         "Expression contains mixed types: %s, %s. You must "
                         "set output_field."
                         % (
-                            output_field.__class__.__name__,
+                            first_cls.__name__,
                             source.__class__.__name__,
                         )
                     )
-            return output_field
+            return first_output_field
 
     @staticmethod
     def _convert_value_noop(value, expression, connection):
