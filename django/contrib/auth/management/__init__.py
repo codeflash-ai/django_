@@ -31,7 +31,7 @@ def _get_builtin_permissions(opts):
         perms.append(
             (
                 get_permission_codename(action, opts),
-                "Can %s %s" % (action, opts.verbose_name_raw),
+                f"Can {action} {opts.verbose_name_raw}",
             )
         )
     return perms
