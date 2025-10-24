@@ -2,6 +2,8 @@ from functools import wraps
 
 from asgiref.sync import iscoroutinefunction
 
+_coroutine_check_cache = {}
+
 
 def xframe_options_deny(view_func):
     """
@@ -72,19 +74,25 @@ def xframe_options_exempt(view_func):
     def some_view(request):
         ...
     """
+    func_id = id(view_func)
+    if func_id not in _coroutine_check_cache:
+        _coroutine_check_cache[func_id] = iscoroutinefunction(view_func)
 
-    if iscoroutinefunction(view_func):
+    if _coroutine_check_cache[func_id]:
 
+        @wraps(view_func)
         async def _view_wrapper(*args, **kwargs):
             response = await view_func(*args, **kwargs)
             response.xframe_options_exempt = True
             return response
 
+        return _view_wrapper
     else:
 
+        @wraps(view_func)
         def _view_wrapper(*args, **kwargs):
             response = view_func(*args, **kwargs)
             response.xframe_options_exempt = True
             return response
 
-    return wraps(view_func)(_view_wrapper)
+        return _view_wrapper
