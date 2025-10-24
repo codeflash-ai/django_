@@ -1768,15 +1768,20 @@ class ModelAdmin(BaseModelAdmin):
         """
         Get the initial form data from the request's GET params.
         """
-        initial = dict(request.GET.items())
-        for k in initial:
+        # Avoid unnecessary dict copies by processing directly from request.GET.items().
+        # Build initial, splitting M2M field values efficiently in a single pass.
+        initial = {}
+        get_field = self.opts.get_field
+        is_m2m = models.ManyToManyField
+        for k, v in request.GET.items():
             try:
-                f = self.opts.get_field(k)
+                f = get_field(k)
             except FieldDoesNotExist:
                 continue
-            # We have to special-case M2Ms as a list of comma-separated PKs.
-            if isinstance(f, models.ManyToManyField):
-                initial[k] = initial[k].split(",")
+            if isinstance(f, is_m2m):
+                initial[k] = v.split(",")
+            else:
+                initial[k] = v
         return initial
 
     def _get_obj_does_not_exist_redirect(self, request, opts, object_id):
