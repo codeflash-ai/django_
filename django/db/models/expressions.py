@@ -758,18 +758,12 @@ class CombinedExpression(SQLiteNumericMixin, Expression):
         return combined_type()
 
     def as_sql(self, compiler, connection):
-        expressions = []
-        expression_params = []
-        sql, params = compiler.compile(self.lhs)
-        expressions.append(sql)
-        expression_params.extend(params)
-        sql, params = compiler.compile(self.rhs)
-        expressions.append(sql)
-        expression_params.extend(params)
+        # Optimize by minimizing list usage and localize the wrapper string
+        sql_lhs, params_lhs = compiler.compile(self.lhs)
+        sql_rhs, params_rhs = compiler.compile(self.rhs)
         # order of precedence
-        expression_wrapper = "(%s)"
-        sql = connection.ops.combine_expression(self.connector, expressions)
-        return expression_wrapper % sql, expression_params
+        sql = connection.ops.combine_expression(self.connector, [sql_lhs, sql_rhs])
+        return f"({sql})", params_lhs + params_rhs  # concat lists directly
 
     def resolve_expression(
         self, query=None, allow_joins=True, reuse=None, summarize=False, for_save=False
@@ -815,7 +809,9 @@ class DurationExpression(CombinedExpression):
         except FieldError:
             pass
         else:
-            if output.get_internal_type() == "DurationField":
+            # Move get_internal_type to local for possible micro-optimization
+            internal_type = output.get_internal_type()
+            if internal_type == "DurationField":
                 sql, params = compiler.compile(side)
                 return connection.ops.format_for_duration_arithmetic(sql), params
         return compiler.compile(side)
@@ -824,18 +820,13 @@ class DurationExpression(CombinedExpression):
         if connection.features.has_native_duration_field:
             return super().as_sql(compiler, connection)
         connection.ops.check_expression_support(self)
-        expressions = []
-        expression_params = []
-        sql, params = self.compile(self.lhs, compiler, connection)
-        expressions.append(sql)
-        expression_params.extend(params)
-        sql, params = self.compile(self.rhs, compiler, connection)
-        expressions.append(sql)
-        expression_params.extend(params)
+        sql_lhs, params_lhs = self.compile(self.lhs, compiler, connection)
+        sql_rhs, params_rhs = self.compile(self.rhs, compiler, connection)
         # order of precedence
-        expression_wrapper = "(%s)"
-        sql = connection.ops.combine_duration_expression(self.connector, expressions)
-        return expression_wrapper % sql, expression_params
+        sql = connection.ops.combine_duration_expression(
+            self.connector, [sql_lhs, sql_rhs]
+        )
+        return f"({sql})", params_lhs + params_rhs  # concat lists directly
 
     def as_sqlite(self, compiler, connection, **extra_context):
         sql, params = self.as_sql(compiler, connection, **extra_context)
