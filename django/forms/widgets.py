@@ -287,7 +287,7 @@ class Widget(metaclass=MediaDefiningClass):
     use_fieldset = False
 
     def __init__(self, attrs=None):
-        self.attrs = {} if attrs is None else attrs.copy()
+        self.attrs = {} if attrs is None else dict(attrs)
 
     def __deepcopy__(self, memo):
         obj = copy.copy(self)
@@ -375,11 +375,15 @@ class Input(Widget):
 
     def __init__(self, attrs=None):
         if attrs is not None:
-            attrs = attrs.copy()
-            self.input_type = attrs.pop("type", self.input_type)
+            # Dict constructor is slightly faster; only copy keys if dict, skip if None
+            attrs = dict(attrs)
+            # Avoid unnecessary lookup by saving self.input_type reference
+            input_type = getattr(self, "input_type", None)
+            self.input_type = attrs.pop("type", input_type)
         super().__init__(attrs)
 
     def get_context(self, name, value, attrs):
+        # Super call is needed, then set "type" in widget
         context = super().get_context(name, value, attrs)
         context["widget"]["type"] = self.input_type
         return context
