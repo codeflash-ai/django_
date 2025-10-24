@@ -1,6 +1,6 @@
 import copy
 import inspect
-from functools import wraps
+from functools import lru_cache, wraps
 from importlib import import_module
 
 from django.db import router
@@ -60,7 +60,7 @@ class BaseManager:
             module_name = self.__module__
             name = self.__class__.__name__
             # Make sure it's actually there and not an inner class
-            module = import_module(module_name)
+            module = self._cached_import_module(module_name)
             if not hasattr(module, name):
                 raise ValueError(
                     "Could not find manager %s in %s.\n"
@@ -171,6 +171,11 @@ class BaseManager:
 
     def __hash__(self):
         return id(self)
+
+    @staticmethod
+    @lru_cache(maxsize=128)
+    def _cached_import_module(module_name: str):
+        return import_module(module_name)
 
 
 class Manager(BaseManager.from_queryset(QuerySet)):
