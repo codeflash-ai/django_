@@ -2,7 +2,7 @@ import base64
 import re
 import unicodedata
 from binascii import Error as BinasciiError
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from email.utils import formatdate
 from urllib.parse import quote, unquote
 from urllib.parse import urlencode as original_urlencode
@@ -117,7 +117,7 @@ def parse_http_date(date):
     try:
         year = int(m["year"])
         if year < 100:
-            current_year = datetime.now(tz=UTC).year
+            current_year = datetime.now(tz=timezone.utc).year
             current_century = current_year - (current_year % 100)
             if year - (current_year % 100) > 50:
                 # year that appears to be more than 50 years in the future are
@@ -130,7 +130,7 @@ def parse_http_date(date):
         hour = int(m["hour"])
         min = int(m["min"])
         sec = int(m["sec"])
-        result = datetime(year, month, day, hour, min, sec, tzinfo=UTC)
+        result = datetime(year, month, day, hour, min, sec, tzinfo=timezone.utc)
         return int(result.timestamp())
     except Exception as exc:
         raise ValueError("%r is not a valid date" % date) from exc
@@ -264,11 +264,16 @@ def url_has_allowed_host_and_scheme(url, allowed_hosts, require_https=False):
         allowed_hosts = {allowed_hosts}
     # Chrome treats \ completely as / in paths but it could be part of some
     # basic auth credentials so we need to check both URLs.
-    return _url_has_allowed_host_and_scheme(
-        url, allowed_hosts, require_https=require_https
-    ) and _url_has_allowed_host_and_scheme(
-        url.replace("\\", "/"), allowed_hosts, require_https=require_https
-    )
+    if "\\" in url:
+        return _url_has_allowed_host_and_scheme(
+            url, allowed_hosts, require_https=require_https
+        ) and _url_has_allowed_host_and_scheme(
+            url.replace("\\", "/"), allowed_hosts, require_https=require_https
+        )
+    else:
+        return _url_has_allowed_host_and_scheme(
+            url, allowed_hosts, require_https=require_https
+        )
 
 
 def _url_has_allowed_host_and_scheme(url, allowed_hosts, require_https=False):
@@ -283,25 +288,33 @@ def _url_has_allowed_host_and_scheme(url, allowed_hosts, require_https=False):
         url_info = urlsplit(url)
     except ValueError:  # e.g. invalid IPv6 addresses
         return False
+
     # Forbid URLs like http:///example.com - with a scheme, but without a
     # hostname. In that URL, example.com is not the hostname but, a path
     # component. However, Chrome will still consider example.com to be the
     # hostname, so we must not allow this syntax.
     if not url_info.netloc and url_info.scheme:
         return False
+
     # Forbid URLs that start with control characters. Some browsers (like
     # Chrome) ignore quite a few control characters at the start of a
     # URL and might consider the URL as scheme relative.
-    if unicodedata.category(url[0])[0] == "C":
-        return False
+    if ord(url[0]) < 32 or ord(url[0]) == 127:
+        if unicodedata.category(url[0])[0] == "C":
+            return False
+
     scheme = url_info.scheme
     # Consider URLs without a scheme (e.g. //example.com/p) to be http.
-    if not url_info.scheme and url_info.netloc:
+    if not scheme and url_info.netloc:
         scheme = "http"
-    valid_schemes = ["https"] if require_https else ["http", "https"]
-    return (not url_info.netloc or url_info.netloc in allowed_hosts) and (
-        not scheme or scheme in valid_schemes
-    )
+    # Use tuple instead of list for valid_schemes (faster "in" and allocation)
+    valid_schemes = ("https",) if require_https else ("http", "https")
+    # Avoid constructing objects in the common case of not netloc: reorder checks
+    if not url_info.netloc:
+        netloc_allowed = True
+    else:
+        netloc_allowed = url_info.netloc in allowed_hosts
+    return netloc_allowed and (not scheme or scheme in valid_schemes)
 
 
 def escape_leading_slashes(url):
