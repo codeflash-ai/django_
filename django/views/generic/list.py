@@ -26,12 +26,13 @@ class MultipleObjectMixin(ContextMixin):
         The return value must be an iterable and may be an instance of
         `QuerySet` in which case `QuerySet` specific behavior will be enabled.
         """
-        if self.queryset is not None:
-            queryset = self.queryset
-            if isinstance(queryset, QuerySet):
-                queryset = queryset.all()
+        queryset = self.queryset
+        if queryset is not None:
+            # Avoid calling .all() if already a QuerySet and no ordering is needed
+            queryset_is_queryset = isinstance(queryset, QuerySet)
         elif self.model is not None:
             queryset = self.model._default_manager.all()
+            queryset_is_queryset = True
         else:
             raise ImproperlyConfigured(
                 "%(cls)s is missing a QuerySet. Define "
@@ -40,10 +41,28 @@ class MultipleObjectMixin(ContextMixin):
             )
         ordering = self.get_ordering()
         if ordering:
+            # Prepare ordering tuple only if needed
             if isinstance(ordering, str):
                 ordering = (ordering,)
-            queryset = queryset.order_by(*ordering)
-
+            # Only call .all() if this is a base QuerySet, and avoid .order_by() on non-QuerySet
+            if queryset_is_queryset:
+                # If user gave an evaluated QuerySet (e.g. list(qs)), skip .all()/order_by
+                # But can't test with hasattr(queryset, 'order_by') as could be custom
+                # Call .all() (clone) before order_by only if self.queryset is used (to avoid side effects)
+                if self.queryset is not None:
+                    queryset = queryset.all()
+                queryset = queryset.order_by(*ordering)
+            else:
+                # ordering with non-QuerySet: fallback to original (would have failed anyway)
+                queryset = queryset
+        else:
+            # .all() only necessary if queryset is class-level QuerySet and ordering not needed
+            if (
+                queryset is not None
+                and self.queryset is not None
+                and isinstance(queryset, QuerySet)
+            ):
+                queryset = queryset.all()
         return queryset
 
     def get_ordering(self):
