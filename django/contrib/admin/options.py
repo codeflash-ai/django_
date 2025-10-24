@@ -1002,10 +1002,14 @@ class ModelAdmin(BaseModelAdmin):
     def _get_base_actions(self):
         """Return the list of actions, prior to any request-based filtering."""
         actions = []
-        base_actions = (self.get_action(action) for action in self.actions or [])
-        # get_action might have returned None, so filter any of those out.
-        base_actions = [action for action in base_actions if action]
-        base_action_names = {name for _, name, _ in base_actions}
+        base_actions = []
+        base_action_names = set()
+        get_action = self.get_action
+        for action in self.actions or []:
+            act = get_action(action)
+            if act:
+                base_actions.append(act)
+                base_action_names.add(act[1])
 
         # Gather actions from the admin site first
         for name, func in self.admin_site.actions:
@@ -1022,15 +1026,16 @@ class ModelAdmin(BaseModelAdmin):
         filtered_actions = []
         for action in actions:
             callable = action[0]
-            if not hasattr(callable, "allowed_permissions"):
+            allowed_perms = getattr(callable, "allowed_permissions", None)
+            if not allowed_perms:
                 filtered_actions.append(action)
                 continue
-            permission_checks = (
-                getattr(self, "has_%s_permission" % permission)
-                for permission in callable.allowed_permissions
-            )
-            if any(has_permission(request) for has_permission in permission_checks):
-                filtered_actions.append(action)
+            # Check permissions and break early on first match
+            for permission in allowed_perms:
+                has_permission = getattr(self, "has_%s_permission" % permission)
+                if has_permission(request):
+                    filtered_actions.append(action)
+                    break
         return filtered_actions
 
     def get_actions(self, request):
