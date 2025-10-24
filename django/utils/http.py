@@ -1,8 +1,9 @@
 import base64
 import re
+import time
 import unicodedata
 from binascii import Error as BinasciiError
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from email.utils import formatdate
 from urllib.parse import quote, unquote
 from urllib.parse import urlencode as original_urlencode
@@ -10,6 +11,23 @@ from urllib.parse import urlsplit
 
 from django.utils.datastructures import MultiValueDict
 from django.utils.regex_helper import _lazy_re_compile
+
+_MONTHS = (
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+)
+
+_WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
 # Based on RFC 9110 Appendix A.
 ETAG_MATCH = _lazy_re_compile(
@@ -93,7 +111,10 @@ def http_date(epoch_seconds=None):
 
     Output a string in the format 'Wdy, DD Mon YYYY HH:MM:SS GMT'.
     """
-    return formatdate(epoch_seconds, usegmt=True)
+    if epoch_seconds is None:
+        epoch_seconds = time.time()
+    tm = time.gmtime(epoch_seconds)
+    return f"{_WEEKDAYS[tm.tm_wday]}, {tm.tm_mday:02d} {_MONTHS[tm.tm_mon - 1]} {tm.tm_year} {tm.tm_hour:02d}:{tm.tm_min:02d}:{tm.tm_sec:02d} GMT"
 
 
 def parse_http_date(date):
@@ -117,7 +138,7 @@ def parse_http_date(date):
     try:
         year = int(m["year"])
         if year < 100:
-            current_year = datetime.now(tz=UTC).year
+            current_year = datetime.now(tz=timezone.utc).year
             current_century = current_year - (current_year % 100)
             if year - (current_year % 100) > 50:
                 # year that appears to be more than 50 years in the future are
@@ -130,7 +151,7 @@ def parse_http_date(date):
         hour = int(m["hour"])
         min = int(m["min"])
         sec = int(m["sec"])
-        result = datetime(year, month, day, hour, min, sec, tzinfo=UTC)
+        result = datetime(year, month, day, hour, min, sec, tzinfo=timezone.utc)
         return int(result.timestamp())
     except Exception as exc:
         raise ValueError("%r is not a valid date" % date) from exc
