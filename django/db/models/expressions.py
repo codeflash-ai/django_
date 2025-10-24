@@ -927,6 +927,9 @@ class F(Combinable):
         return OrderBy(self, **kwargs)
 
     def desc(self, **kwargs):
+        # Avoid passing descending=True via **kwargs to save dict creation if kwargs is empty
+        if not kwargs:
+            return OrderBy(self, descending=True)
         return OrderBy(self, descending=True, **kwargs)
 
     def __eq__(self, other):
