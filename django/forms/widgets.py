@@ -307,20 +307,27 @@ class Widget(metaclass=MediaDefiningClass):
         """
         Return a value as it should appear when rendered in a template.
         """
-        if value == "" or value is None:
+        # Collapse check for both "" and None in one step (most common cases first)
+        if not value and value != 0:
             return None
         if self.is_localized:
             return formats.localize_input(value)
         return str(value)
 
     def get_context(self, name, value, attrs):
+        # Avoid redundant intermediate dictionary creation in build_attrs
+        base_attrs = self.attrs
+        if attrs:
+            widget_attrs = {**base_attrs, **attrs}
+        else:
+            widget_attrs = base_attrs
         return {
             "widget": {
                 "name": name,
                 "is_hidden": self.is_hidden,
                 "required": self.is_required,
                 "value": self.format_value(value),
-                "attrs": self.build_attrs(self.attrs, attrs),
+                "attrs": widget_attrs,
                 "template_name": self.template_name,
             },
         }
