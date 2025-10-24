@@ -296,21 +296,32 @@ class BaseExpression:
         """
         c = self.copy()
         c.is_summary = summarize
-        source_expressions = [
-            (
-                expr.resolve_expression(query, allow_joins, reuse, summarize, for_save)
-                if expr is not None
-                else None
-            )
-            for expr in c.get_source_expressions()
-        ]
-        if not self.allows_composite_expressions and any(
-            isinstance(expr, ColPairs) for expr in source_expressions
-        ):
-            raise ValueError(
-                f"{self.__class__.__name__} expression does not support "
-                "composite primary keys."
-            )
+        # Avoid an extra list and range checks with a more direct check
+        src_exprs = c.get_source_expressions()
+        n = len(src_exprs)
+        if n == 0:
+            source_expressions = []
+        else:
+            # Use a simple for-loop over expressions to avoid creating intermediate lists
+            source_expressions = []
+            for expr in src_exprs:
+                if expr is not None:
+                    source_expressions.append(
+                        expr.resolve_expression(
+                            query, allow_joins, reuse, summarize, for_save
+                        )
+                    )
+                else:
+                    source_expressions.append(None)
+        # Fast-path avoids any() check for empty source_expressions
+        if not self.allows_composite_expressions and source_expressions:
+            for expr in source_expressions:
+                # local import for ColPairs is not present here, as this code must not change behavior
+                if isinstance(expr, ColPairs):
+                    raise ValueError(
+                        f"{self.__class__.__name__} expression does not support "
+                        "composite primary keys."
+                    )
         c.set_source_expressions(source_expressions)
         return c
 
@@ -441,7 +452,11 @@ class BaseExpression:
         return refs
 
     def copy(self):
-        return copy.copy(self)
+        # Use type(self).__new__ and __dict__ update for a slightly cheaper copy, since these objects are very shallow
+        cls = type(self)
+        result = cls.__new__(cls)
+        result.__dict__.update(self.__dict__)
+        return result
 
     def prefix_references(self, prefix):
         clone = self.copy()
