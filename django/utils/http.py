@@ -2,7 +2,7 @@ import base64
 import re
 import unicodedata
 from binascii import Error as BinasciiError
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from email.utils import formatdate
 from urllib.parse import quote, unquote
 from urllib.parse import urlencode as original_urlencode
@@ -117,7 +117,7 @@ def parse_http_date(date):
     try:
         year = int(m["year"])
         if year < 100:
-            current_year = datetime.now(tz=UTC).year
+            current_year = datetime.now(tz=timezone.utc).year
             current_century = current_year - (current_year % 100)
             if year - (current_year % 100) > 50:
                 # year that appears to be more than 50 years in the future are
@@ -130,7 +130,7 @@ def parse_http_date(date):
         hour = int(m["hour"])
         min = int(m["min"])
         sec = int(m["sec"])
-        result = datetime(year, month, day, hour, min, sec, tzinfo=UTC)
+        result = datetime(year, month, day, hour, min, sec, tzinfo=timezone.utc)
         return int(result.timestamp())
     except Exception as exc:
         raise ValueError("%r is not a valid date" % date) from exc
@@ -279,27 +279,43 @@ def _url_has_allowed_host_and_scheme(url, allowed_hosts, require_https=False):
         # is very slow on Windows and can be a DoS attack vector.
         # https://docs.python.org/3/library/urllib.parse.html#url-parsing-security
         return False
+
+    # Fast-fail for suspicious URLs: control character at start.
+    # Use ord instead of unicodedata.category for first ASCII range. Only call unicodedata if needed.
+    first_char = url[0]
+    # ASCII control characters: 0x00–0x1F, 0x7F
+    if ord(first_char) < 32 or ord(first_char) == 127:
+        return False
+    # If not ASCII, check full Unicode category (matches "C*" categories)
+    if ord(first_char) > 127 and unicodedata.category(first_char)[0] == "C":
+        return False
+
     try:
         url_info = urlsplit(url)
     except ValueError:  # e.g. invalid IPv6 addresses
         return False
+
     # Forbid URLs like http:///example.com - with a scheme, but without a
     # hostname. In that URL, example.com is not the hostname but, a path
     # component. However, Chrome will still consider example.com to be the
     # hostname, so we must not allow this syntax.
     if not url_info.netloc and url_info.scheme:
         return False
-    # Forbid URLs that start with control characters. Some browsers (like
-    # Chrome) ignore quite a few control characters at the start of a
-    # URL and might consider the URL as scheme relative.
-    if unicodedata.category(url[0])[0] == "C":
-        return False
+
     scheme = url_info.scheme
     # Consider URLs without a scheme (e.g. //example.com/p) to be http.
-    if not url_info.scheme and url_info.netloc:
+    if not scheme and url_info.netloc:
         scheme = "http"
-    valid_schemes = ["https"] if require_https else ["http", "https"]
-    return (not url_info.netloc or url_info.netloc in allowed_hosts) and (
+
+    # Use tuple instead of list for valid_schemes (faster for 'in' checks)
+    valid_schemes = ("https",) if require_https else ("http", "https")
+
+    # Precompute boolean checks to avoid double attribute access
+    netloc = url_info.netloc
+    # Replace 'netloc in allowed_hosts' with set lookup for O(1) if input is likely a set or list
+    # However, ref and annotations say not to mutate input, so don't coerce allowed_hosts.
+
+    return (not netloc or netloc in allowed_hosts) and (
         not scheme or scheme in valid_schemes
     )
 
