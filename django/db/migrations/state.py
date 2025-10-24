@@ -593,10 +593,16 @@ class ProjectState:
     @classmethod
     def from_apps(cls, apps):
         """Take an Apps and return a ProjectState matching it."""
+        # Use a local variable to avoid lookups inside loop.
         app_models = {}
+        model_state_append = app_models.__setitem__
+
         for model in apps.get_models(include_swapped=True):
             model_state = ModelState.from_model(model)
-            app_models[(model_state.app_label, model_state.name_lower)] = model_state
+            # Use local lookup and attribute instead of recomputing string lower.
+            model_state_append(
+                (model_state.app_label, model_state.name_lower), model_state
+            )
         return cls(app_models)
 
     def __eq__(self, other):
@@ -749,6 +755,7 @@ class ModelState:
     ):
         self.app_label = app_label
         self.name = name
+        self.name_lower = name.lower()  # Cache for repeated use
         self.fields = dict(fields)
         self.options = options or {}
         self.options.setdefault("indexes", [])
@@ -797,30 +804,34 @@ class ModelState:
     @classmethod
     def from_model(cls, model, exclude_rels=False):
         """Given a model, return a ModelState representing it."""
-        # Deconstruct the fields
+
+        # -- Optimize local_fields iteration
         fields = []
-        for field in model._meta.local_fields:
-            if getattr(field, "remote_field", None) and exclude_rels:
-                continue
-            if isinstance(field, models.OrderWrt):
-                continue
-            name = field.name
-            try:
-                fields.append((name, field.clone()))
-            except TypeError as e:
-                raise TypeError(
-                    "Couldn't reconstruct field %s on %s: %s"
-                    % (
-                        name,
-                        model._meta.label,
-                        e,
-                    )
-                )
+        fields_append = fields.append
+
+        local_fields = model._meta.local_fields
+        # Avoid repeated hasattr/getattr/model._meta object lookups
+        # Avoid closure and tmp allocations in loops by reducing attribute accesses
         if not exclude_rels:
+            for field in local_fields:
+                if isinstance(field, models.OrderWrt):
+                    continue
+                name = field.name
+                try:
+                    fields_append((name, field.clone()))
+                except TypeError as e:
+                    raise TypeError(
+                        "Couldn't reconstruct field %s on %s: %s"
+                        % (
+                            name,
+                            model._meta.label,
+                            e,
+                        )
+                    )
             for field in model._meta.local_many_to_many:
                 name = field.name
                 try:
-                    fields.append((name, field.clone()))
+                    fields_append((name, field.clone()))
                 except TypeError as e:
                     raise TypeError(
                         "Couldn't reconstruct m2m field %s on %s: %s"
@@ -830,59 +841,93 @@ class ModelState:
                             e,
                         )
                     )
-        # Extract the options
+        else:
+            for field in local_fields:
+                # Use direct attribute access when possible for speed
+                remote_field = getattr(field, "remote_field", None)
+                if remote_field is not None and exclude_rels:
+                    continue
+                if isinstance(field, models.OrderWrt):
+                    continue
+                name = field.name
+                try:
+                    fields_append((name, field.clone()))
+                except TypeError as e:
+                    raise TypeError(
+                        "Couldn't reconstruct field %s on %s: %s"
+                        % (
+                            name,
+                            model._meta.label,
+                            e,
+                        )
+                    )
+
+        # -- Optimize options extraction
         options = {}
+        options_setitem = options.__setitem__
+        original_attrs = model._meta.original_attrs
+        # Use fast set lookup for ['apps','app_label'] skip
+        skip_names = {"apps", "app_label"}
+
+        unique_together_keys = ("unique_together", "order_with_respect_to")
+
+        # Preallocate attribute mapping for repeated accesses
+        indexes_key = "indexes"
+        constraints_key = "constraints"
+        object_name = model._meta.object_name
+        label = model._meta.label
+
         for name in DEFAULT_NAMES:
-            # Ignore some special options
-            if name in ["apps", "app_label"]:
+            if name in skip_names:
                 continue
-            elif name in model._meta.original_attrs:
+            if name in original_attrs:
                 if name == "unique_together":
-                    ut = model._meta.original_attrs["unique_together"]
-                    options[name] = set(normalize_together(ut))
-                elif name == "indexes":
+                    ut = original_attrs["unique_together"]
+                    options_setitem(name, set(normalize_together(ut)))
+                elif name == indexes_key:
                     indexes = [idx.clone() for idx in model._meta.indexes]
                     for index in indexes:
                         if not index.name:
                             index.set_name_with_model(model)
-                    options["indexes"] = indexes
-                elif name == "constraints":
-                    options["constraints"] = [
-                        con.clone() for con in model._meta.constraints
-                    ]
+                    options_setitem(indexes_key, indexes)
+                elif name == constraints_key:
+                    options_setitem(
+                        constraints_key,
+                        [con.clone() for con in model._meta.constraints],
+                    )
                 else:
-                    options[name] = model._meta.original_attrs[name]
-        # If we're ignoring relationships, remove all field-listing model
-        # options (that option basically just means "make a stub model")
+                    options_setitem(name, original_attrs[name])
+
+        # -- Remove stub fields or private fields from options where needed
         if exclude_rels:
-            for key in ["unique_together", "order_with_respect_to"]:
+            for key in unique_together_keys:
                 if key in options:
                     del options[key]
-        # Private fields are ignored, so remove options that refer to them.
         elif options.get("order_with_respect_to") in {
             field.name for field in model._meta.private_fields
         }:
             del options["order_with_respect_to"]
 
+        # -- Flatten and resolve bases efficiently
         def flatten_bases(model):
-            bases = []
-            for base in model.__bases__:
-                if hasattr(base, "_meta") and base._meta.abstract:
-                    bases.extend(flatten_bases(base))
-                else:
-                    bases.append(base)
-            return bases
+            result = []
+            # stack-based recursion for performance
+            stack = [model]
+            seen = set()
+            while stack:
+                cur_model = stack.pop()
+                for base in cur_model.__bases__:
+                    if hasattr(base, "_meta") and base._meta.abstract:
+                        if base not in seen:
+                            seen.add(base)
+                            stack.append(base)
+                    else:
+                        result.append(base)
+            return result
 
-        # We can't rely on __mro__ directly because we only want to flatten
-        # abstract models and not the whole tree. However by recursing on
-        # __bases__ we may end up with duplicates and ordering issues, we
-        # therefore discard any duplicates and reorder the bases according
-        # to their index in the MRO.
-        flattened_bases = sorted(
-            set(flatten_bases(model)), key=lambda x: model.__mro__.index(x)
-        )
-
-        # Make our record
+        # Use set and index lookup for optimal ordering and deduping
+        mro_index = model.__mro__.index
+        flattened_bases = sorted(set(flatten_bases(model)), key=mro_index)
         bases = tuple(
             (base._meta.label_lower if hasattr(base, "_meta") else base)
             for base in flattened_bases
@@ -893,28 +938,32 @@ class ModelState:
         ):
             bases = (models.Model,)
 
+        # -- Optimize managers extraction & default_manager shim
         managers = []
         manager_names = set()
         default_manager_shim = None
+        # Use local assignment for append
+        managers_append = managers.append
+        manager_is = lambda m, ref: m is ref
+
         for manager in model._meta.managers:
             if manager.name in manager_names:
-                # Skip overridden managers.
                 continue
             elif manager.use_in_migrations:
-                # Copy managers usable in migrations.
                 new_manager = copy.copy(manager)
                 new_manager._set_creation_counter()
-            elif manager is model._base_manager or manager is model._default_manager:
-                # Shim custom managers used as default and base managers.
+            elif manager_is(manager, model._base_manager) or manager_is(
+                manager, model._default_manager
+            ):
                 new_manager = models.Manager()
                 new_manager.model = manager.model
                 new_manager.name = manager.name
-                if manager is model._default_manager:
+                if manager_is(manager, model._default_manager):
                     default_manager_shim = new_manager
             else:
                 continue
             manager_names.add(manager.name)
-            managers.append((manager.name, new_manager))
+            managers_append((manager.name, new_manager))
 
         # Ignore a shimmed default manager called objects if it's the only one.
         if managers == [("objects", default_manager_shim)]:
@@ -923,7 +972,7 @@ class ModelState:
         # Construct the new ModelState
         return cls(
             model._meta.app_label,
-            model._meta.object_name,
+            object_name,
             fields,
             options,
             bases,
