@@ -2,7 +2,7 @@ import base64
 import re
 import unicodedata
 from binascii import Error as BinasciiError
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from email.utils import formatdate
 from urllib.parse import quote, unquote
 from urllib.parse import urlencode as original_urlencode
@@ -10,6 +10,9 @@ from urllib.parse import urlsplit
 
 from django.utils.datastructures import MultiValueDict
 from django.utils.regex_helper import _lazy_re_compile
+
+# Compile the regex pattern once at module import time for performance
+_QUOTABLE_ASCII_RE: re.Pattern = re.compile(r"^[\t \x21-\x7e]*$")
 
 # Based on RFC 9110 Appendix A.
 ETAG_MATCH = _lazy_re_compile(
@@ -117,7 +120,7 @@ def parse_http_date(date):
     try:
         year = int(m["year"])
         if year < 100:
-            current_year = datetime.now(tz=UTC).year
+            current_year = datetime.now(tz=timezone.utc).year
             current_century = current_year - (current_year % 100)
             if year - (current_year % 100) > 50:
                 # year that appears to be more than 50 years in the future are
@@ -130,7 +133,7 @@ def parse_http_date(date):
         hour = int(m["hour"])
         min = int(m["min"])
         sec = int(m["sec"])
-        result = datetime(year, month, day, hour, min, sec, tzinfo=UTC)
+        result = datetime(year, month, day, hour, min, sec, tzinfo=timezone.utc)
         return int(result.timestamp())
     except Exception as exc:
         raise ValueError("%r is not a valid date" % date) from exc
@@ -373,22 +376,18 @@ def content_disposition_header(as_attachment, filename):
     """
     if filename:
         disposition = "attachment" if as_attachment else "inline"
-        try:
-            filename.encode("ascii")
-            is_ascii = True
-        except UnicodeEncodeError:
-            is_ascii = False
-        # Quoted strings can contain horizontal tabs, space characters, and
-        # characters from 0x21 to 0x7e, except 0x22 (`"`) and 0x5C (`\`) which
-        # can still be expressed but must be escaped with their own `\`.
-        # https://datatracker.ietf.org/doc/html/rfc9110#name-quoted-strings
-        quotable_characters = r"^[\t \x21-\x7e]*$"
-        if is_ascii and re.match(quotable_characters, filename):
-            file_expr = 'filename="{}"'.format(
-                filename.replace("\\", "\\\\").replace('"', r"\"")
-            )
+
+        # Fast explicit check for ASCII using 'isascii' (Python 3.7+), skip try/except
+        is_ascii = filename.isascii()
+
+        # Only perform regex match if ASCII
+        if is_ascii and _QUOTABLE_ASCII_RE.match(filename):
+            # Escape \ and " as per quoted-string rules, then construct header
+            escaped = filename.replace("\\", "\\\\").replace('"', r"\"")
+            file_expr = f'filename="{escaped}"'
         else:
-            file_expr = "filename*=utf-8''{}".format(quote(filename))
+            # Fallback for non-ASCII: RFC 2231 encoding
+            file_expr = f"filename*=utf-8''{quote(filename)}"
         return f"{disposition}; {file_expr}"
     elif as_attachment:
         return "attachment"
