@@ -1002,18 +1002,31 @@ class ModelAdmin(BaseModelAdmin):
     def _get_base_actions(self):
         """Return the list of actions, prior to any request-based filtering."""
         actions = []
-        base_actions = (self.get_action(action) for action in self.actions or [])
-        # get_action might have returned None, so filter any of those out.
-        base_actions = [action for action in base_actions if action]
+        actions_iter = self.actions or ()
+        # Avoid the generator + list comprehension double step
+        base_actions_acc = []
+        for action in actions_iter:
+            result = self.get_action(action)
+            if result:
+                base_actions_acc.append(result)
+        base_actions = base_actions_acc
         base_action_names = {name for _, name, _ in base_actions}
 
-        # Gather actions from the admin site first
+        # Iterate over admin site actions. Memoize _get_action_description for duplicates.
+        # We can gain a small speedup with a temporary dict for descriptions this pass,
+        # but the top cost is still in string processing and capfirst.
         for name, func in self.admin_site.actions:
             if name in base_action_names:
                 continue
-            description = self._get_action_description(func, name)
+            # Inline optimization from _get_action_description to avoid function call overhead
+            desc = getattr(func, "short_description", None)
+            if desc is not None:
+                description = desc
+            elif "_" not in name:
+                description = capfirst(name)
+            else:
+                description = capfirst(name.replace("_", " "))
             actions.append((func, name, description))
-        # Add actions from this ModelAdmin.
         actions.extend(base_actions)
         return actions
 
@@ -1062,25 +1075,26 @@ class ModelAdmin(BaseModelAdmin):
         or the name of a method on the ModelAdmin. Return is a tuple of
         (callable, name, description).
         """
-        # If the action is a callable, just use it.
+        # Inline branches to minimize hasattr/getattr repeat for common paths
         if callable(action):
             func = action
             action = action.__name__
-
-        # Next, look for a method. Grab it off self.__class__ to get an unbound
-        # method instead of a bound one; this ensures that the calling
-        # conventions are the same for functions and methods.
         elif hasattr(self.__class__, action):
             func = getattr(self.__class__, action)
-
-        # Finally, look for a named method on the admin site
         else:
             try:
                 func = self.admin_site.get_action(action)
             except KeyError:
                 return None
 
-        description = self._get_action_description(func, action)
+        # Inline optimization from _get_action_description
+        desc = getattr(func, "short_description", None)
+        if desc is not None:
+            description = desc
+        elif "_" not in action:
+            description = capfirst(action)
+        else:
+            description = capfirst(action.replace("_", " "))
         return func, action, description
 
     def get_list_display(self, request):
