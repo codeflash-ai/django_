@@ -195,7 +195,10 @@ class BaseExpression:
             self.output_field = output_field
 
     def __getstate__(self):
-        state = self.__dict__.copy()
+        d = self.__dict__
+        if "convert_value" not in d:
+            return d
+        state = d.copy()
         state.pop("convert_value", None)
         return state
 
