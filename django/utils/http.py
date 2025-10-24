@@ -2,7 +2,7 @@ import base64
 import re
 import unicodedata
 from binascii import Error as BinasciiError
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from email.utils import formatdate
 from urllib.parse import quote, unquote
 from urllib.parse import urlencode as original_urlencode
@@ -117,7 +117,7 @@ def parse_http_date(date):
     try:
         year = int(m["year"])
         if year < 100:
-            current_year = datetime.now(tz=UTC).year
+            current_year = datetime.now(tz=timezone.utc).year
             current_century = current_year - (current_year % 100)
             if year - (current_year % 100) > 50:
                 # year that appears to be more than 50 years in the future are
@@ -130,7 +130,7 @@ def parse_http_date(date):
         hour = int(m["hour"])
         min = int(m["min"])
         sec = int(m["sec"])
-        result = datetime(year, month, day, hour, min, sec, tzinfo=UTC)
+        result = datetime(year, month, day, hour, min, sec, tzinfo=timezone.utc)
         return int(result.timestamp())
     except Exception as exc:
         raise ValueError("%r is not a valid date" % date) from exc
@@ -202,12 +202,17 @@ def parse_etags(etag_str):
     defined by RFC 9110. Return a list of quoted ETags, or ['*'] if all ETags
     should be matched.
     """
-    if etag_str.strip() == "*":
+    etag_str = etag_str.strip()
+    if etag_str == "*":
         return ["*"]
-    else:
-        # Parse each ETag individually, and return any that are valid.
-        etag_matches = (ETAG_MATCH.match(etag.strip()) for etag in etag_str.split(","))
-        return [match[1] for match in etag_matches if match]
+    # Avoid the generator and list comprehension overhead by using a loop and local variable lookups
+    etags = []
+    match = ETAG_MATCH.match
+    for etag in etag_str.split(","):
+        m = match(etag.strip())
+        if m:
+            etags.append(m[1])
+    return etags
 
 
 def quote_etag(etag_str):
