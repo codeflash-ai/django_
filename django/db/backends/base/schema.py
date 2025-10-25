@@ -154,6 +154,10 @@ class BaseDatabaseSchemaEditor:
         if self.collect_sql:
             self.collected_sql = []
         self.atomic_migration = self.connection.features.can_rollback_ddl and atomic
+        # Cache shortcut references for string templates and quote function for performance
+        self._sql_constraint = getattr(self, "sql_constraint", None)
+        self._sql_check_constraint = getattr(self, "sql_check_constraint", None)
+        self._quote_name = self.connection.ops.quote_name
 
     # State-managing methods
 
@@ -205,7 +209,8 @@ class BaseDatabaseSchemaEditor:
                 cursor.execute(sql, params)
 
     def quote_name(self, name):
-        return self.connection.ops.quote_name(name)
+        # Bypass attribute lookup using cached reference
+        return self._quote_name(name)
 
     def table_sql(self, model):
         """Take a model and return its table definition."""
@@ -1947,9 +1952,16 @@ class BaseDatabaseSchemaEditor:
         return self._delete_constraint_sql(sql, model, name)
 
     def _check_sql(self, name, check):
-        return self.sql_constraint % {
-            "name": self.quote_name(name),
-            "constraint": self.sql_check_constraint % {"check": check},
+        # Use local variables for globals and cache lookups to optimize string formatting
+        sql_constraint = self._sql_constraint
+        sql_check_constraint = self._sql_check_constraint
+        quote_name = self._quote_name
+        # Directly interpolate both pieces before outer interpolation
+        constraint_str = sql_check_constraint % {"check": check}
+        name_str = quote_name(name)
+        return sql_constraint % {
+            "name": name_str,
+            "constraint": constraint_str,
         }
 
     def _create_check_sql(self, model, name, check):
