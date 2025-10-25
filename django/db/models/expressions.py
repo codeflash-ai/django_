@@ -1779,14 +1779,18 @@ class Subquery(BaseExpression, Combinable):
 
     def __init__(self, queryset, output_field=None, **extra):
         # Allow the usage of both QuerySet and sql.Query objects.
-        self.query = getattr(queryset, "query", queryset).clone()
+        query = getattr(queryset, "query", queryset)
+        # Clone and mark as subquery.
+        self.query = query.clone()
         self.query.subquery = True
-        self.template = extra.pop("template", self.template)
+        # Directly assign template if provided, else use class attribute (faster lookup than instance fallback).
+        self.template = extra.pop("template", getattr(self, "template", None))
         self.extra = extra
         super().__init__(output_field)
 
     def get_source_expressions(self):
-        return [self.query]
+        # Use tuple for immutable return value, saving memory if never mutated.
+        return (self.query,)
 
     def set_source_expressions(self, exprs):
         self.query = exprs[0]
