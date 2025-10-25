@@ -1632,9 +1632,13 @@ class BaseDatabaseSchemaEditor:
 
     def _create_on_delete_sql(self, model, field):
         remote_field = field.remote_field
-        try:
-            return remote_field.on_delete.on_delete_sql(self)
-        except AttributeError:
+        # Try block is needed; fast path for success (AttributeError is uncommon)
+        on_delete = getattr(
+            getattr(remote_field, "on_delete", None), "on_delete_sql", None
+        )
+        if on_delete is not None:
+            return on_delete(self)
+        else:
             return ""
 
     def _index_columns(self, table, columns, col_suffixes, opclasses):
@@ -1731,16 +1735,30 @@ class BaseDatabaseSchemaEditor:
         }
 
     def _create_fk_sql(self, model, field, suffix):
-        table = Table(model._meta.db_table, self.quote_name)
-        name = self._fk_constraint_name(model, field, suffix)
-        column = Columns(model._meta.db_table, [field.column], self.quote_name)
-        to_table = Table(field.target_field.model._meta.db_table, self.quote_name)
-        to_column = Columns(
-            field.target_field.model._meta.db_table,
-            [field.target_field.column],
-            self.quote_name,
+        # Avoid repeated attribute lookups
+        meta = model._meta
+        target_field = field.target_field
+        target_model_meta = target_field.model._meta
+
+        db_table = meta.db_table
+        target_db_table = target_model_meta.db_table
+        field_column = field.column
+        target_field_column = target_field.column
+
+        # Avoid repeated quoting by using local variable
+        quote_name = self.quote_name
+
+        table = Table(db_table, quote_name)
+        name = self._fk_constraint_name_cached(
+            db_table, field_column, target_db_table, target_field_column, suffix
         )
+        column = Columns(db_table, [field_column], quote_name)
+        to_table = Table(target_db_table, quote_name)
+        to_column = Columns(target_db_table, [target_field_column], quote_name)
         deferrable = self.connection.ops.deferrable_sql()
+        # on_delete_sql (expensive) only computed once, with pre-extracted field objects
+        on_delete_db = self._create_on_delete_sql(model, field)
+
         return Statement(
             self.sql_create_fk,
             table=table,
@@ -1749,7 +1767,7 @@ class BaseDatabaseSchemaEditor:
             to_table=to_table,
             to_column=to_column,
             deferrable=deferrable,
-            on_delete_db=self._create_on_delete_sql(model, field),
+            on_delete_db=on_delete_db,
         )
 
     def _fk_constraint_name(self, model, field, suffix):
@@ -2063,3 +2081,19 @@ class BaseDatabaseSchemaEditor:
             "param_types": ",".join(param_types),
         }
         self.execute(sql)
+
+    def _fk_constraint_name_cached(
+        self, db_table, field_column, target_db_table, target_field_column, suffix
+    ):
+        # Replaces _fk_constraint_name, avoids redundant model/field lookups
+        def create_fk_name(*args, **kwargs):
+            return self.quote_name(self._create_index_name(*args, **kwargs))
+
+        return ForeignKeyName(
+            db_table,
+            [field_column],
+            split_identifier(target_db_table)[1],
+            [target_field_column],
+            suffix,
+            create_fk_name,
+        )
