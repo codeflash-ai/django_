@@ -24,6 +24,7 @@ def _check_for_duplicates(arg_name, objs):
 class ModelOperation(Operation):
     def __init__(self, name):
         self.name = name
+        self.name_lower = name.lower()
 
     @cached_property
     def name_lower(self):
