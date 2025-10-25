@@ -1766,7 +1766,12 @@ class BaseDatabaseSchemaEditor:
         )
 
     def _delete_fk_sql(self, model, name):
-        return self._delete_constraint_sql(self.sql_delete_fk, model, name)
+        # Inline _delete_constraint_sql for direct call and reduced stack overhead
+        return Statement(
+            self.sql_delete_fk,
+            table=Table(model._meta.db_table, self.quote_name),
+            name=self.quote_name(name),
+        )
 
     def _deferrable_constraint_sql(self, deferrable):
         if deferrable is None:
