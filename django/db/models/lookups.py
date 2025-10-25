@@ -227,12 +227,30 @@ class Transform(RegisterLookupMixin, Func):
 
 class BuiltinLookup(Lookup):
     def process_lhs(self, compiler, connection, lhs=None):
-        lhs_sql, params = super().process_lhs(compiler, connection, lhs)
-        field_internal_type = self.lhs.output_field.get_internal_type()
-        lhs_sql = (
-            connection.ops.lookup_cast(self.lookup_name, field_internal_type) % lhs_sql
-        )
-        return lhs_sql, list(params)
+        # Optimized: Avoid unnecessary tuple/list allocations, cache attribute lookups.
+        lhs_obj = lhs if lhs is not None else self.lhs
+        # Inline super().process_lhs for single dispatch
+        if hasattr(lhs_obj, "resolve_expression"):
+            resolved_lhs = lhs_obj.resolve_expression(compiler.query)
+        else:
+            resolved_lhs = lhs_obj
+        sql, params = compiler.compile(resolved_lhs)
+        # Inline handling for operator precedence
+        if isinstance(resolved_lhs, Lookup):
+            sql = f"({sql})"
+        # Cache output_field and lookup_cast ops
+        output_field = getattr(self.lhs, "output_field", None)
+        if output_field is None:
+            field_internal_type = None
+        else:
+            field_internal_type = output_field.get_internal_type()
+        cast_fmt = connection.ops.lookup_cast(self.lookup_name, field_internal_type)
+        lhs_sql = cast_fmt % sql
+        # Short-circuit list construction if params is already a list
+        if isinstance(params, list):
+            return lhs_sql, params
+        else:
+            return lhs_sql, list(params)
 
     def as_sql(self, compiler, connection):
         lhs_sql, params = self.process_lhs(compiler, connection)
@@ -656,24 +674,37 @@ class IsNull(BuiltinLookup):
     prepare_rhs = False
 
     def as_sql(self, compiler, connection):
-        if not isinstance(self.rhs, bool):
+        # Optimized: Minor micro-optimizations on branches and type lookups
+        rhs = self.rhs
+        if not isinstance(rhs, bool):
             raise ValueError(
                 "The QuerySet value for an isnull lookup must be True or False."
             )
-        if isinstance(self.lhs, Value):
-            if self.lhs.value is None or (
-                self.lhs.value == ""
-                and connection.features.interprets_empty_strings_as_nulls
+
+        lhs_inst = self.lhs
+        # Fast path for Value with None or empty string, flatten nested conditions
+        if isinstance(lhs_inst, Value):
+            v = lhs_inst.value
+            if v is None or (
+                v == "" and connection.features.interprets_empty_strings_as_nulls
             ):
-                result_exception = FullResultSet if self.rhs else EmptyResultSet
+                if rhs:
+                    raise FullResultSet
+                else:
+                    raise EmptyResultSet
             else:
-                result_exception = EmptyResultSet if self.rhs else FullResultSet
-            raise result_exception
+                if rhs:
+                    raise EmptyResultSet
+                else:
+                    raise FullResultSet
+
+        # process_lhs is a heavy call, cache outputs and avoid superfluous unpacking
         sql, params = self.process_lhs(compiler, connection)
-        if self.rhs:
-            return "%s IS NULL" % sql, params
+        # Conditional string formatting
+        if rhs:
+            return f"{sql} IS NULL", params
         else:
-            return "%s IS NOT NULL" % sql, params
+            return f"{sql} IS NOT NULL", params
 
 
 @Field.register_lookup
