@@ -131,9 +131,16 @@ class DjangoHelpFormatter(HelpFormatter):
     }
 
     def _reordered_actions(self, actions):
-        return sorted(
-            actions, key=lambda a: set(a.option_strings) & self.show_last != set()
-        )
+        show_last = self.show_last  # Cache attribute lookup for performance
+
+        # Faster and less memory: use any() instead of set intersection and allocation
+        def _is_show_last(a):
+            for opt_str in a.option_strings:
+                if opt_str in show_last:
+                    return True
+            return False
+
+        return sorted(actions, key=_is_show_last)
 
     def add_usage(self, usage, actions, *args, **kwargs):
         super().add_usage(usage, self._reordered_actions(actions), *args, **kwargs)
