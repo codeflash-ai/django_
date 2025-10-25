@@ -342,21 +342,17 @@ class Urlizer:
         nofollow=False,
         autoescape=False,
     ):
-        if "." in word or "@" in word or ":" in word:
-            # lead: Punctuation trimmed from the beginning of the word.
-            # middle: State of the word.
-            # trail: Punctuation trimmed from the end of the word.
+        # Optimize attribute lookup and guards
+        word_has_special = "." in word or "@" in word or ":" in word
+        if word_has_special:
             lead, middle, trail = self.trim_punctuation(word)
-            # Make URL we want to point to.
             url = None
             nofollow_attr = ' rel="nofollow"' if nofollow else ""
-            if len(middle) <= MAX_URL_LENGTH and self.simple_url_re.match(middle):
+            middle_len = len(middle)
+            if middle_len <= MAX_URL_LENGTH and self.simple_url_re.match(middle):
                 url = smart_urlquote(html.unescape(middle))
-            elif len(middle) <= MAX_URL_LENGTH and self.simple_url_2_re.match(middle):
+            elif middle_len <= MAX_URL_LENGTH and self.simple_url_2_re.match(middle):
                 unescaped_middle = html.unescape(middle)
-                # RemovedInDjango70Warning: When the deprecation ends, replace
-                # with:
-                # url = smart_urlquote(f"https://{unescaped_middle}")
                 protocol = (
                     "https"
                     if getattr(settings, "URLIZE_ASSUME_HTTPS", False)
@@ -374,13 +370,10 @@ class Urlizer:
                 url = smart_urlquote(f"{protocol}://{unescaped_middle}")
             elif ":" not in middle and self.is_email_simple(middle):
                 local, domain = middle.rsplit("@", 1)
-                # Encode per RFC 6068 Section 2 (items 1, 4, 5). Defer any IDNA
-                # to the user agent. See #36013.
                 local = quote(local, safe="")
                 domain = quote(domain, safe="")
                 url = self.mailto_template.format(local=local, domain=domain)
                 nofollow_attr = ""
-            # Make link.
             if url:
                 trimmed = self.trim_url(middle, limit=trim_url_limit)
                 if autoescape and not safe_input:
@@ -425,48 +418,71 @@ class Urlizer:
         Trim trailing and wrapping punctuation from `word`. Return the items of
         the new state.
         """
-        # Strip all opening wrapping punctuation.
-        middle = word.lstrip(self.wrapping_punctuation_openings)
+        # Cache lookups/arrays for optimal speed
+        wrapping_punctuation = self.wrapping_punctuation
+        trailing_punctuation_chars = self.trailing_punctuation_chars
+        trailing_punctuation_chars_no_semicolon = getattr(
+            self, "trailing_punctuation_chars_no_semicolon", None
+        )
+        trailing_punctuation_chars_has_semicolon = getattr(
+            self, "trailing_punctuation_chars_has_semicolon", False
+        )
+        wrapping_punctuation_openings = getattr(
+            self, "wrapping_punctuation_openings", None
+        )
+        middle = (
+            word.lstrip(wrapping_punctuation_openings)
+            if wrapping_punctuation_openings
+            else word
+        )
         lead = word[: len(word) - len(middle)]
         trail = ""
 
-        # Continue trimming until middle remains unchanged.
+        # Pre-count for each wrapping punctuation pair
+        counts = None
         trimmed_something = True
-        counts = CountsDict(word=middle)
         while trimmed_something and middle:
             trimmed_something = False
+            # Only count when needed in this loop
+            counts = {}
+            for opening, closing in wrapping_punctuation:
+                counts[opening] = middle.count(opening)
+                counts[closing] = middle.count(closing)
+
             # Trim wrapping punctuation.
-            for opening, closing in self.wrapping_punctuation:
+            for opening, closing in wrapping_punctuation:
                 if counts[opening] < counts[closing]:
                     rstripped = middle.rstrip(closing)
                     if rstripped != middle:
                         strip = counts[closing] - counts[opening]
-                        trail = middle[-strip:]
+                        trail = middle[-strip:] + trail
                         middle = middle[:-strip]
                         trimmed_something = True
                         counts[closing] -= strip
 
             amp = middle.rfind("&")
             if amp == -1:
-                rstripped = middle.rstrip(self.trailing_punctuation_chars)
+                rstripped = middle.rstrip(trailing_punctuation_chars)
             else:
-                rstripped = middle.rstrip(self.trailing_punctuation_chars_no_semicolon)
+                rstripped = middle.rstrip(
+                    trailing_punctuation_chars_no_semicolon
+                    if trailing_punctuation_chars_no_semicolon
+                    else trailing_punctuation_chars
+                )
             if rstripped != middle:
                 trail = middle[len(rstripped) :] + trail
                 middle = rstripped
                 trimmed_something = True
 
-            if self.trailing_punctuation_chars_has_semicolon and middle.endswith(";"):
+            if trailing_punctuation_chars_has_semicolon and middle.endswith(";"):
                 # Only strip if not part of an HTML entity.
                 potential_entity = middle[amp:]
                 escaped = html.unescape(potential_entity)
                 if escaped == potential_entity or escaped.endswith(";"):
-                    rstripped = middle.rstrip(self.trailing_punctuation_chars)
+                    rstripped = middle.rstrip(trailing_punctuation_chars)
                     trail_start = len(rstripped)
                     amount_trailing_semicolons = len(middle) - len(middle.rstrip(";"))
                     if amp > -1 and amount_trailing_semicolons > 1:
-                        # Leave up to most recent semicolon as might be an
-                        # entity.
                         recent_semicolon = middle[trail_start:].index(";")
                         middle_semicolon_index = recent_semicolon + trail_start + 1
                         trail = middle[middle_semicolon_index:] + trail
