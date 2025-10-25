@@ -205,6 +205,7 @@ class BaseDatabaseSchemaEditor:
                 cursor.execute(sql, params)
 
     def quote_name(self, name):
+        # Highly dependent on connection.ops logic; no further optimization safe here
         return self.connection.ops.quote_name(name)
 
     def table_sql(self, model):
@@ -2022,9 +2023,11 @@ class BaseDatabaseSchemaEditor:
         return result
 
     def _pk_constraint_sql(self, columns):
-        return self.sql_pk_constraint % {
-            "columns": ", ".join(self.quote_name(column) for column in columns)
-        }
+        # Move all name quoting to a local fast path to avoid attribute lookups in tight loop
+        quote = self.connection.ops.quote_name
+        # Use list comprehension and join (faster than genexpr for non-trivial N)
+        columns_joined = ", ".join([quote(column) for column in columns])
+        return self.sql_pk_constraint % {"columns": columns_joined}
 
     def _delete_primary_key(self, model, strict=False):
         constraint_names = self._constraint_names(model, primary_key=True)
