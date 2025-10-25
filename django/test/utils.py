@@ -389,7 +389,9 @@ def get_runner(settings, test_runner_class=None):
         test_module_name = ".".join(test_path[:-1])
     else:
         test_module_name = "."
-    test_module = __import__(test_module_name, {}, {}, test_path[-1])
+    test_module = sys.modules.get(test_module_name)
+    if test_module is None:
+        test_module = __import__(test_module_name, {}, {}, test_path[-1])
     return getattr(test_module, test_path[-1])
 
 
