@@ -97,14 +97,25 @@ class InteractiveMigrationQuestioner(MigrationQuestioner):
         self.prompt_output = prompt_output or OutputWrapper(sys.stdout)
 
     def _boolean_input(self, question, default=None):
+        # The write() method on OutputWrapper performs string formatting and styling,
+        # which is necessary. We minimize write calls by only performing the prompt once,
+        # and ensure we reuse result processing for performance.
         self.prompt_output.write(f"{question} ", ending="")
         result = input()
         if not result and default is not None:
             return default
-        while not result or result[0].lower() not in "yn":
+        # Instead of using a loop with 'while', minimize attribute lookups and string
+        # duplication by moving .lower() outside of repeated calls and using in {'y', 'n'}
+        while True:
+            if not result:
+                self.prompt_output.write("Please answer yes or no: ", ending="")
+                result = input()
+                continue
+            ans = result[0].lower()
+            if ans in {"y", "n"}:
+                return ans == "y"
             self.prompt_output.write("Please answer yes or no: ", ending="")
             result = input()
-        return result[0].lower() == "y"
 
     def _choice_input(self, question, choices):
         self.prompt_output.write(f"{question}")
@@ -237,12 +248,12 @@ class InteractiveMigrationQuestioner(MigrationQuestioner):
 
     def ask_rename_model(self, old_model_state, new_model_state):
         """Was this model really renamed?"""
-        msg = "Was the model %s.%s renamed to %s? [y/N]"
-        return self._boolean_input(
-            msg
-            % (old_model_state.app_label, old_model_state.name, new_model_state.name),
-            False,
+        # Pre-format the message once, using f-string for performance and direct attribute access
+        msg = (
+            f"Was the model {old_model_state.app_label}.{old_model_state.name} "
+            f"renamed to {new_model_state.name}? [y/N]"
         )
+        return self._boolean_input(msg, False)
 
     def ask_merge(self, app_label):
         return self._boolean_input(
