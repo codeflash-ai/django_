@@ -163,11 +163,12 @@ class Signal:
         disconnected = False
         with self.lock:
             self._clear_dead_receivers()
-            for index in range(len(self.receivers)):
-                r_key, *_ = self.receivers[index]
+            receivers = self.receivers
+            for idx, receiver_tuple in enumerate(receivers):
+                r_key = receiver_tuple[0]
                 if r_key == lookup_key:
                     disconnected = True
-                    del self.receivers[index]
+                    del receivers[idx]
                     break
             self.sender_receivers_cache.clear()
         return disconnected
