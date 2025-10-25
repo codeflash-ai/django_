@@ -108,14 +108,21 @@ def get_format(format_type, lang=None, use_l10n=None):
     """
     if use_l10n is None:
         use_l10n = True
-    if use_l10n and lang is None:
-        lang = get_language()
     format_type = str(format_type)  # format_type may be lazy.
     cache_key = (format_type, lang)
     try:
         return _format_cache[cache_key]
     except KeyError:
         pass
+
+    # Only call get_language() if actually needed and not already cached
+    if use_l10n and lang is None:
+        lang = get_language()
+        cache_key = (format_type, lang)
+        try:
+            return _format_cache[cache_key]
+        except KeyError:
+            pass
 
     # The requested format_type has not been cached yet. Try to find it in any
     # of the format_modules for the given lang if l10n is enabled. If it's not
@@ -220,23 +227,32 @@ def localize_input(value, default=None):
     Check if an input value is a localizable type and return it
     formatted with the appropriate formatting string of the current locale.
     """
-    if isinstance(value, str):  # Handle strings first for performance reasons.
+    # Optimize isinstance usage: order by expected frequency & short-circuit
+    t_value = type(value)
+    if t_value is str:  # Handle strings first for performance reasons.
         return value
-    elif isinstance(value, bool):  # Don't treat booleans as numbers.
+    elif t_value is bool:  # Don't treat booleans as numbers.
         return str(value)
-    elif isinstance(value, (decimal.Decimal, float, int)):
+    elif t_value is int or t_value is float or t_value is decimal.Decimal:
         return number_format(value)
-    elif isinstance(value, datetime.datetime):
-        format = default or get_format("DATETIME_INPUT_FORMATS")[0]
-        format = sanitize_strftime_format(format)
-        return value.strftime(format)
-    elif isinstance(value, datetime.date):
-        format = default or get_format("DATE_INPUT_FORMATS")[0]
-        format = sanitize_strftime_format(format)
-        return value.strftime(format)
-    elif isinstance(value, datetime.time):
-        format = default or get_format("TIME_INPUT_FORMATS")[0]
-        return value.strftime(format)
+    elif t_value is datetime.datetime:
+        fmt = default
+        if fmt is None:
+            fmt = get_format("DATETIME_INPUT_FORMATS")[0]
+        fmt2 = sanitize_strftime_format(fmt)
+        return value.strftime(fmt2)
+    elif t_value is datetime.date:
+        fmt = default
+        if fmt is None:
+            fmt = get_format("DATE_INPUT_FORMATS")[0]
+        fmt2 = sanitize_strftime_format(fmt)
+        return value.strftime(fmt2)
+    elif t_value is datetime.time:
+        fmt = default
+        if fmt is None:
+            fmt = get_format("TIME_INPUT_FORMATS")[0]
+        # No need to sanitize time formats
+        return value.strftime(fmt)
     return value
 
 
