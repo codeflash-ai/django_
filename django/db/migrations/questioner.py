@@ -20,8 +20,8 @@ class MigrationQuestioner:
     """
 
     def __init__(self, defaults=None, specified_apps=None, dry_run=None):
-        self.defaults = defaults or {}
-        self.specified_apps = specified_apps or set()
+        self.defaults = defaults if defaults is not None else {}
+        self.specified_apps = specified_apps if specified_apps is not None else set()
         self.dry_run = dry_run
 
     def ask_initial(self, app_label):
