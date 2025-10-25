@@ -89,7 +89,7 @@ class BaseCache:
         Return the timeout value usable by this backend based upon the provided
         timeout.
         """
-        if timeout == DEFAULT_TIMEOUT:
+        if timeout is DEFAULT_TIMEOUT:
             timeout = self.default_timeout
         elif timeout == 0:
             # ticket 21147 - avoid time.time() related precision issues
