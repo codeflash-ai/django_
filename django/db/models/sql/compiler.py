@@ -1546,7 +1546,12 @@ class SQLCompiler:
     def has_composite_fields(self, expressions):
         # Check for composite fields before calling the relatively costly
         # composite_fields_to_tuples.
-        return any(isinstance(expression, ColPairs) for expression in expressions)
+        colpairs_type = ColPairs
+        # Use generator and return immediately upon finding the first match for performance
+        for expression in expressions:
+            if isinstance(expression, colpairs_type):
+                return True
+        return False
 
     def composite_fields_to_tuples(self, rows, expressions):
         col_pair_slices = [
