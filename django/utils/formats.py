@@ -10,6 +10,12 @@ from django.utils import dateformat, numberformat
 from django.utils.functional import lazy
 from django.utils.translation import check_for_language, get_language, to_locale
 
+_SANITIZE_STRFTIME_PATTERN = re.compile(r"((?:^|[^%])(?:%%)*)%([CFGY])")
+
+_SANITIZE_STRFTIME_MAPPING = {"C": 2, "F": 10, "G": 4, "Y": 4}
+
+_GLIBC_STRFTIME_BUG_PRESENT = datetime.date(1, 1, 1).strftime("%Y") != "0001"
+
 # format_cache is a mapping from (format_type, lang) to the format string.
 # By using the cache, it is possible to avoid running get_format_modules
 # repeatedly.
@@ -263,14 +269,15 @@ def sanitize_strftime_format(fmt):
 
     See https://bugs.python.org/issue13305 for more details.
     """
-    if datetime.date(1, 1, 1).strftime("%Y") == "0001":
+    if not _GLIBC_STRFTIME_BUG_PRESENT:
         return fmt
-    mapping = {"C": 2, "F": 10, "G": 4, "Y": 4}
-    return re.sub(
-        r"((?:^|[^%])(?:%%)*)%([CFGY])",
-        lambda m: r"%s%%0%s%s" % (m[1], mapping[m[2]], m[2]),
-        fmt,
-    )
+
+    # Avoid recreating mapping and regex on each call
+    def _replace(m):
+        # m[1] = group 1, m[2] = matched specifier
+        return f"{m[1]}%0{_SANITIZE_STRFTIME_MAPPING[m[2]]}{m[2]}"
+
+    return _SANITIZE_STRFTIME_PATTERN.sub(_replace, fmt)
 
 
 def sanitize_separators(value):
