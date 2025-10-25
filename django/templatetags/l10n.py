@@ -47,14 +47,21 @@ def localize_tag(parser, token):
             var pi = {{ 3.1415 }};
         {% endlocalize %}
     """
-    use_l10n = None
-    bits = list(token.split_contents())
-    if len(bits) == 1:
+    bits = token.split_contents()
+    bits_len = len(bits)
+    if bits_len == 1:
         use_l10n = True
-    elif len(bits) > 2 or bits[1] not in ("on", "off"):
+    elif bits_len > 2:
         raise TemplateSyntaxError("%r argument should be 'on' or 'off'" % bits[0])
     else:
-        use_l10n = bits[1] == "on"
+        b1 = bits[1]
+        # Faster membership check on tuple with only two literals
+        if b1 == "on":
+            use_l10n = True
+        elif b1 == "off":
+            use_l10n = False
+        else:
+            raise TemplateSyntaxError("%r argument should be 'on' or 'off'" % bits[0])
     nodelist = parser.parse(("endlocalize",))
     parser.delete_first_token()
     return LocalizeNode(nodelist, use_l10n)
