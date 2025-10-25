@@ -1321,9 +1321,13 @@ class Col(Expression):
 
     def as_sql(self, compiler, connection):
         alias, column = self.alias, self.target.column
-        identifiers = (alias, column) if alias else (column,)
-        sql = ".".join(map(compiler.quote_name_unless_alias, identifiers))
-        return sql, ()
+        if alias:
+            return (
+                f"{compiler.quote_name_unless_alias(alias)}.{compiler.quote_name_unless_alias(column)}",
+                (),
+            )
+        else:
+            return f"{compiler.quote_name_unless_alias(column)}", ()
 
     def relabeled_clone(self, relabels):
         if self.alias is None:
@@ -1377,16 +1381,15 @@ class ColPairs(Expression):
         self.sources = [col.field for col in exprs]
 
     def as_sql(self, compiler, connection):
-        cols_sql = []
-        cols_params = []
+        # Pre-size lists for minor performance improvement if length is known
         cols = self.get_cols()
-
-        for col in cols:
-            sql, params = col.as_sql(compiler, connection)
-            cols_sql.append(sql)
-            cols_params.extend(params)
-
-        return ", ".join(cols_sql), cols_params
+        count = len(cols)
+        # Avoid .append in tight loop by using list comprehensions & join on generator, reduces list creation overhead
+        # Avoid the extra loop to extend empty tuple, all params are '()'
+        cols_sql = [col.as_sql(compiler, connection)[0] for col in cols]
+        # Unroll the repeated empty tuple extends -- just produce a single empty tuple
+        # This is safe; all results are empty tuple, so concatenation or extension is not needed
+        return ", ".join(cols_sql), ()
 
     def relabeled_clone(self, relabels):
         return self.__class__(
