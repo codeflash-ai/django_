@@ -399,17 +399,23 @@ def getInnerText(node):
     """Get all the inner text of a DOM node (recursively)."""
     # inspired by
     # https://mail.python.org/pipermail/xml-sig/2005-March/011022.html
+
+    def _collect_text(n, acc):
+        # Use function argument list for more efficient accumulation,
+        # and avoid list.extend on every recursion
+        for child in n.childNodes:
+            if (
+                child.nodeType == child.TEXT_NODE
+                or child.nodeType == child.CDATA_SECTION_NODE
+            ):
+                acc.append(child.data)
+            elif child.nodeType == child.ELEMENT_NODE:
+                _collect_text(child, acc)
+            else:
+                pass
+
     inner_text = []
-    for child in node.childNodes:
-        if (
-            child.nodeType == child.TEXT_NODE
-            or child.nodeType == child.CDATA_SECTION_NODE
-        ):
-            inner_text.append(child.data)
-        elif child.nodeType == child.ELEMENT_NODE:
-            inner_text.extend(getInnerText(child))
-        else:
-            pass
+    _collect_text(node, inner_text)
     return "".join(inner_text)
 
 
