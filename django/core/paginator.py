@@ -164,22 +164,34 @@ class Paginator(BasePaginator):
         Return a valid page, even if the page argument isn't a number or isn't
         in range.
         """
+        num_pages = self.num_pages  # Cache attribute to local variable
         try:
-            number = self.validate_number(number)
+            number = self._validate_number(
+                number, num_pages
+            )  # Avoid double method indirection
         except PageNotAnInteger:
             number = 1
         except EmptyPage:
-            number = self.num_pages
+            number = num_pages
+        # Avoid repeated validate_number call by directly using validated number
         return self.page(number)
 
     def page(self, number):
         """Return a Page object for the given 1-based page number."""
-        number = self.validate_number(number)
-        bottom = (number - 1) * self.per_page
-        top = bottom + self.per_page
-        if top + self.orphans >= self.count:
-            top = self.count
-        return self._get_page(self.object_list[bottom:top], number, self)
+        num_pages = self.num_pages  # Cache attribute to local variable
+        number = self._validate_number(number, num_pages)  # Avoid indirection
+        per_page = self.per_page
+        orphans = self.orphans
+        count = self.count
+        # Cache object_list to a local to avoid repeated attribute access
+        object_list = self.object_list
+
+        bottom = (number - 1) * per_page
+        top = bottom + per_page
+        # Avoid repeated computation in the slice logic with locals above
+        if top + orphans >= count:
+            top = count
+        return self._get_page(object_list[bottom:top], number, self)
 
     @cached_property
     def count(self):
