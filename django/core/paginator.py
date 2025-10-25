@@ -139,9 +139,14 @@ class BasePaginator:
     def _validate_number(self, number, num_pages):
         """Validate the given 1-based page number."""
         try:
-            if isinstance(number, float) and not number.is_integer():
-                raise ValueError
-            number = int(number)
+            if type(number) is int:
+                pass
+            elif type(number) is float:
+                if not number.is_integer():
+                    raise ValueError
+                number = int(number)
+            else:
+                number = int(number)
         except (TypeError, ValueError):
             raise PageNotAnInteger(self.error_messages["invalid_page"])
         if number < 1:
@@ -233,7 +238,10 @@ class AsyncPaginator(BasePaginator):
             yield await self.apage(page_number)
 
     async def avalidate_number(self, number):
-        num_pages = await self.anum_pages()
+        if self._cache_anum_pages is not None:
+            num_pages = self._cache_anum_pages
+        else:
+            num_pages = await self.anum_pages()
         return self._validate_number(number, num_pages)
 
     async def aget_page(self, number):
@@ -286,7 +294,9 @@ class AsyncPaginator(BasePaginator):
             self._cache_anum_pages = 0
             return self._cache_anum_pages
         hits = max(1, count - self.orphans)
-        num_pages = ceil(hits / self.per_page)
+        num_pages = hits // self.per_page
+        if hits % self.per_page:
+            num_pages += 1
 
         self._cache_anum_pages = num_pages
         return num_pages
