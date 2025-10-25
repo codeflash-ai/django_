@@ -48,15 +48,8 @@ class SQLCompiler:
         self.query = query
         self.connection = connection
         self.using = using
-        # Some queries, e.g. coalesced aggregation, need to be executed even if
-        # they would return an empty result set.
         self.elide_empty = elide_empty
         self.quote_cache = {"*": "*"}
-        # The select, klass_info, and annotations are needed by
-        # QuerySet.iterator() these are set as a side-effect of executing the
-        # query. Note that we calculate separately a list of extra select
-        # columns needed for grammatical correctness of the query, but these
-        # columns are not included in self.select.
         self.select = None
         self.annotation_col_map = None
         self.klass_info = None
@@ -633,28 +626,38 @@ class SQLCompiler:
 
     def _get_combinator_part_sql(self, compiler):
         features = self.connection.features
+        query = self.query
         # If the columns list is limited, then all combined queries
         # must have the same columns list. Set the selects defined on
         # the query on all combined queries, if not already set.
-        selected = self.query.selected
-        if selected is not None and compiler.query.selected is None:
-            compiler.query = compiler.query.clone()
-            compiler.query.set_values(selected)
+        selected = query.selected
+        compiler_query = compiler.query
+        if selected is not None and compiler_query.selected is None:
+            # Only clone if really necessary to save cost
+            compiler_query = compiler_query.clone()
+            compiler_query.set_values(selected)
+            compiler.query = (
+                compiler_query  # Maintain behavioral preservation; this is needed
+            )
+        # Inline references for features to avoid attribute lookups
+        subquery = query.subquery
+        supports_parentheses_in_compound = features.supports_parentheses_in_compound
+        supports_slicing_ordering_in_compound = (
+            features.supports_slicing_ordering_in_compound
+        )
+        # Use local variable for combinator to avoid multiple lookups
+        combinator = compiler_query.combinator
         part_sql, part_args = compiler.as_sql(with_col_aliases=True)
-        if compiler.query.combinator:
-            # Wrap in a subquery if wrapping in parentheses isn't
-            # supported.
-            if not features.supports_parentheses_in_compound:
-                part_sql = "SELECT * FROM ({})".format(part_sql)
-            # Add parentheses when combining with compound query if not
-            # already added for all compound queries.
-            elif (
-                self.query.subquery
-                or not features.supports_slicing_ordering_in_compound
-            ):
-                part_sql = "({})".format(part_sql)
-        elif self.query.subquery and features.supports_slicing_ordering_in_compound:
-            part_sql = "({})".format(part_sql)
+        if combinator:
+            # Wrap in a subquery if wrapping in parentheses isn't supported.
+            if not supports_parentheses_in_compound:
+                # Use f-string for faster operation
+                part_sql = f"SELECT * FROM ({part_sql})"
+            # Add parentheses when combining with compound query if not already added for all compound queries.
+            elif subquery or not supports_slicing_ordering_in_compound:
+                part_sql = f"({part_sql})"
+        elif subquery and supports_slicing_ordering_in_compound:
+            part_sql = f"({part_sql})"
         return part_sql, part_args
 
     def get_qualify_sql(self):
