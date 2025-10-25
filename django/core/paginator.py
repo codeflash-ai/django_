@@ -138,9 +138,28 @@ class BasePaginator:
 
     def _validate_number(self, number, num_pages):
         """Validate the given 1-based page number."""
+        # Fast path for ordinary int (not float, not string, not funky type)
+        # Most common case expected; avoids try/except on almost every call.
+        if type(number) is int:
+            if number < 1:
+                raise EmptyPage(self.error_messages["min_page"])
+            if number > num_pages:
+                raise EmptyPage(self.error_messages["no_results"])
+            return number
+
+        # Slightly less common float: catch only the error path
+        if type(number) is float:
+            if not number.is_integer():
+                raise PageNotAnInteger(self.error_messages["invalid_page"])
+            number = int(number)
+            if number < 1:
+                raise EmptyPage(self.error_messages["min_page"])
+            if number > num_pages:
+                raise EmptyPage(self.error_messages["no_results"])
+            return number
+
+        # Slow path: strings or weird types
         try:
-            if isinstance(number, float) and not number.is_integer():
-                raise ValueError
             number = int(number)
         except (TypeError, ValueError):
             raise PageNotAnInteger(self.error_messages["invalid_page"])
