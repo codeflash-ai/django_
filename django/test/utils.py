@@ -30,6 +30,18 @@ from django.urls import get_script_prefix, set_script_prefix
 from django.utils.translation import deactivate
 from django.utils.version import PYPY
 
+TEMPLATES = [
+    {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "APP_DIRS": True,
+    },
+    {
+        "BACKEND": "django.template.backends.jinja2.Jinja2",
+        "APP_DIRS": True,
+        "OPTIONS": {"keep_trailing_newline": True},
+    },
+]
+
 try:
     import jinja2
 except ImportError:
@@ -866,19 +878,7 @@ def require_jinja2(test_func):
     Django template engine for a test or skip it if Jinja2 isn't available.
     """
     test_func = skipIf(jinja2 is None, "this test requires jinja2")(test_func)
-    return override_settings(
-        TEMPLATES=[
-            {
-                "BACKEND": "django.template.backends.django.DjangoTemplates",
-                "APP_DIRS": True,
-            },
-            {
-                "BACKEND": "django.template.backends.jinja2.Jinja2",
-                "APP_DIRS": True,
-                "OPTIONS": {"keep_trailing_newline": True},
-            },
-        ]
-    )(test_func)
+    return override_settings(TEMPLATES=TEMPLATES)(test_func)
 
 
 class override_script_prefix(TestContextDecorator):
