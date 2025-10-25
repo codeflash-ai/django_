@@ -70,16 +70,36 @@ class CreateModel(ModelOperation):
         _check_for_duplicates("managers", (name for name, _ in self.managers))
 
     def deconstruct(self):
+        # Optimize repeated tuple/list construction and method calls
+        # by using local bindings and reusing them directly
+        bases = self.bases
+        managers = self.managers
+
+        # Check for most common cases in a branch-optimized order
+        options = self.options
         kwargs = {
             "name": self.name,
             "fields": self.fields,
         }
-        if self.options:
-            kwargs["options"] = self.options
-        if self.bases and self.bases != (models.Model,):
-            kwargs["bases"] = self.bases
-        if self.managers and self.managers != [("objects", models.Manager())]:
-            kwargs["managers"] = self.managers
+
+        if options:
+            kwargs["options"] = options
+
+        # (models.Model,) is a singleton tuple and is the overwhelming common case; do id() not value comparison to avoid deep checks
+        if bases and not (len(bases) == 1 and bases[0] is models.Model):
+            kwargs["bases"] = bases
+
+        # avoid constructing default manager list and Manager instance each call
+        # Check if it's exactly one tuple with 'objects' and a Manager instance for default case
+        if managers:
+            if not (
+                len(managers) == 1
+                and managers[0][0] == "objects"
+                and isinstance(managers[0][1], models.Manager)
+                and type(managers[0][1]) is models.Manager
+            ):
+                kwargs["managers"] = managers
+
         return (self.__class__.__qualname__, [], kwargs)
 
     def state_forwards(self, app_label, state):
