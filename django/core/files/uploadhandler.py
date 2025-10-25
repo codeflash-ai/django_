@@ -227,13 +227,13 @@ class MemoryFileUploadHandler(FileUploadHandler):
 
         self.file.seek(0)
         return InMemoryUploadedFile(
-            file=self.file,
-            field_name=self.field_name,
-            name=self.file_name,
-            content_type=self.content_type,
-            size=file_size,
-            charset=self.charset,
-            content_type_extra=self.content_type_extra,
+            self.file,
+            self.field_name,
+            self.file_name,
+            self.content_type,
+            file_size,
+            self.charset,
+            self.content_type_extra,
         )
 
 
