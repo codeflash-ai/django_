@@ -18,6 +18,8 @@ from django.utils.regex_helper import _lazy_re_compile
 from django.utils.safestring import SafeData, SafeString, mark_safe
 from django.utils.text import normalize_newlines
 
+_strip_spaces_pattern = re.compile(r">\s+<")
+
 # https://html.spec.whatwg.org/#void-elements
 VOID_ELEMENTS = frozenset(
     (
@@ -232,7 +234,7 @@ def strip_tags(value):
 @keep_lazy_text
 def strip_spaces_between_tags(value):
     """Return the given HTML with spaces between tags removed."""
-    return re.sub(r">\s+<", "><", str(value))
+    return _strip_spaces_pattern.sub("><", str(value))
 
 
 def smart_urlquote(url):
