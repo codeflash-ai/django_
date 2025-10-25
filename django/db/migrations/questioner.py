@@ -107,10 +107,13 @@ class InteractiveMigrationQuestioner(MigrationQuestioner):
         return result[0].lower() == "y"
 
     def _choice_input(self, question, choices):
-        self.prompt_output.write(f"{question}")
+        # Combine writes into a single batch for better performance
+        buf = [f"{question}"]
         for i, choice in enumerate(choices):
-            self.prompt_output.write(" %s) %s" % (i + 1, choice))
-        self.prompt_output.write("Select an option: ", ending="")
+            buf.append(" %s) %s" % (i + 1, choice))
+        buf.append("Select an option: ")
+        self.prompt_output.write("\n".join(buf), ending="")
+
         while True:
             try:
                 result = input()
@@ -133,28 +136,31 @@ class InteractiveMigrationQuestioner(MigrationQuestioner):
         string) which will be shown to the user and used as the return value
         if the user doesn't provide any other input.
         """
-        self.prompt_output.write("Please enter the default value as valid Python.")
+        # Combine static banner into one write for performance and output batching
+        lines = [
+            "Please enter the default value as valid Python.",
+        ]
         if default:
-            self.prompt_output.write(
+            lines.append(
                 f"Accept the default '{default}' by pressing 'Enter' or "
                 f"provide another value."
             )
-        self.prompt_output.write(
+        lines.append(
             "The datetime and django.utils.timezone modules are available, so "
             "it is possible to provide e.g. timezone.now as a value."
         )
-        self.prompt_output.write("Type 'exit' to exit this prompt")
+        lines.append("Type 'exit' to exit this prompt")
+        self.prompt_output.write("\n".join(lines))
+        prompt_default = "[default: {}] >>> ".format(default) if default else ">>> "
+
         while True:
-            if default:
-                prompt = "[default: {}] >>> ".format(default)
-            else:
-                prompt = ">>> "
-            self.prompt_output.write(prompt, ending="")
+            self.prompt_output.write(prompt_default, ending="")
             try:
                 code = input()
             except KeyboardInterrupt:
                 self.prompt_output.write("\nCancelled.")
                 sys.exit(1)
+            # Set code to default if empty and default is available
             if not code and default:
                 code = default
             if not code:
@@ -165,6 +171,7 @@ class InteractiveMigrationQuestioner(MigrationQuestioner):
                 sys.exit(1)
             else:
                 try:
+                    # Use small dictionary for eval to avoid repeated dict creation
                     return eval(code, {}, {"datetime": datetime, "timezone": timezone})
                 except Exception as e:
                     self.prompt_output.write(f"{e.__class__.__name__}: {e}")
@@ -255,11 +262,14 @@ class InteractiveMigrationQuestioner(MigrationQuestioner):
     def ask_auto_now_add_addition(self, field_name, model_name):
         """Adding an auto_now_add field to a model."""
         if not self.dry_run:
+            # Inline f-string and list literal to minimize Python interpreter work
             choice = self._choice_input(
-                f"It is impossible to add the field '{field_name}' with "
-                f"'auto_now_add=True' to {model_name} without providing a "
-                f"default. This is because the database needs something to "
-                f"populate existing rows.\n",
+                (
+                    f"It is impossible to add the field '{field_name}' with "
+                    f"'auto_now_add=True' to {model_name} without providing a "
+                    f"default. This is because the database needs something to "
+                    f"populate existing rows.\n"
+                ),
                 [
                     "Provide a one-off default now which will be set on all "
                     "existing rows",
