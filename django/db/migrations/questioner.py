@@ -23,6 +23,7 @@ class MigrationQuestioner:
         self.defaults = defaults or {}
         self.specified_apps = specified_apps or set()
         self.dry_run = dry_run
+        self._ask_rename_model_default = self.defaults.get("ask_rename_model", False)
 
     def ask_initial(self, app_label):
         """Should we create an initial migration for the app?"""
@@ -70,7 +71,7 @@ class MigrationQuestioner:
 
     def ask_rename_model(self, old_model_state, new_model_state):
         """Was this model really renamed?"""
-        return self.defaults.get("ask_rename_model", False)
+        return self._ask_rename_model_default
 
     def ask_merge(self, app_label):
         """Should these migrations really be merged?"""
