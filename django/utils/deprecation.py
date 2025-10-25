@@ -15,7 +15,7 @@ def django_file_prefixes():
         file = django.__file__
     except AttributeError:
         return ()
-    return (os.path.dirname(file),)
+    return (file.rpartition(os.sep)[0],)
 
 
 class RemovedInNextVersionWarning(DeprecationWarning):
