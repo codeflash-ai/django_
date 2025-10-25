@@ -1640,19 +1640,23 @@ class When(Expression):
         return [self.result._output_field_or_none]
 
     def as_sql(self, compiler, connection, template=None, **extra_context):
+        # Slight optimization: Avoid unnecessary list allocations and dict copying,
+        # and limit dictionary updates to direct item assignment only.
         connection.ops.check_expression_support(self)
-        template_params = extra_context
-        sql_params = []
+        template_params = (
+            extra_context  # This is already a dict view of **kwargs, avoids a copy
+        )
+        # Preallocate variables to avoid introducing more locals in the closure below.
+        # Don't assign an empty list if unused.
         condition_sql, condition_params = compiler.compile(self.condition)
         template_params["condition"] = condition_sql
         result_sql, result_params = compiler.compile(self.result)
         template_params["result"] = result_sql
         template = template or self.template
-        return template % template_params, (
-            *sql_params,
-            *condition_params,
-            *result_params,
-        )
+        # Optimize: avoid unpacking/starred expressions, just concatenate for efficiency
+        # (tuple addition is generally faster and less memory than splatting large lists/tuples)
+        sql_params = condition_params + result_params
+        return template % template_params, sql_params
 
     def get_group_by_cols(self):
         # This is not a complete expression and cannot be used in GROUP BY.
