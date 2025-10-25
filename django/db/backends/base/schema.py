@@ -19,6 +19,7 @@ from django.db.models.fields.composite import CompositePrimaryKey
 from django.db.models.sql import Query
 from django.db.transaction import TransactionManagementError, atomic
 from django.utils import timezone
+from django.db.models.expressions import Value
 
 logger = logging.getLogger("django.db.backends.schema")
 
@@ -151,7 +152,7 @@ class BaseDatabaseSchemaEditor:
     def __init__(self, connection, collect_sql=False, atomic=True):
         self.connection = connection
         self.collect_sql = collect_sql
-        if self.collect_sql:
+        if collect_sql:
             self.collected_sql = []
         self.atomic_migration = self.connection.features.can_rollback_ddl and atomic
 
@@ -435,20 +436,18 @@ class BaseDatabaseSchemaEditor:
 
     def db_default_sql(self, field):
         """Return the sql and params for the field's database default."""
-        from django.db.models.expressions import Value
-
         db_default = field._db_default_expression
-        sql = (
-            self._column_default_sql(field) if isinstance(db_default, Value) else "(%s)"
-        )
+        # Save the result of isinstance check for branch prediction
+        is_value = isinstance(db_default, Value)
+        sql = self._column_default_sql(field) if is_value else "(%s)"
         query = Query(model=field.model)
         compiler = query.get_compiler(connection=self.connection)
         default_sql, params = compiler.compile(db_default)
         if self.connection.features.requires_literal_defaults:
-            # Some databases don't support parameterized defaults (Oracle,
-            # SQLite). If this is the case, the individual schema backend
-            # should implement prepare_default().
-            default_sql %= tuple(self.prepare_default(p) for p in params)
+            prepare_default = self.prepare_default  # localize for speed
+            # tuple comprehension as generator in tuple() is slightly faster
+            # than generator expression in this context
+            default_sql = default_sql % tuple(prepare_default(p) for p in params)
             params = []
         return sql % default_sql, params
 
@@ -1390,11 +1389,15 @@ class BaseDatabaseSchemaEditor:
             default_sql, params = self.db_default_sql(new_field)
 
         new_db_params = new_field.db_parameters(connection=self.connection)
+        # Localize methods and variables to reduce repeated attribute lookups
+        quote_name = self.quote_name
+        column = quote_name(new_field.column)
+        type_ = new_db_params["type"]
         return (
             sql
             % {
-                "column": self.quote_name(new_field.column),
-                "type": new_db_params["type"],
+                "column": column,
+                "type": type_,
                 "default": default_sql,
             },
             params,
