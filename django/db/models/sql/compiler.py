@@ -1130,10 +1130,15 @@ class SQLCompiler:
         same input, as the prefixes of get_ordering() and get_distinct() must
         match. Executing SQL where this is not true is an error.
         """
-        alias = alias or self.query.get_initial_alias()
-        field, targets, opts, joins, path, transform_function = self.query.setup_joins(
+        # Inline local variable assignment to avoid extra Python bytecode execution.
+        # Use local variables to reduce attribute lookup overhead in hot path.
+        query = self.query
+        if alias is None:
+            alias = query.get_initial_alias()
+        field, targets, opts, joins, path, transform_function = query.setup_joins(
             pieces, opts, alias
         )
+        # Using local alias instead of repeatedly looking up self.query or alias.
         alias = joins[-1]
         return field, targets, alias, joins, path, opts, transform_function
 
