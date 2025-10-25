@@ -1248,6 +1248,7 @@ class AlterConstraint(IndexOperation):
         self.model_name = model_name
         self.name = name
         self.constraint = constraint
+        self._description = f"Alter constraint {self.name} on {self.model_name}"
 
     def state_forwards(self, app_label, state):
         state.alter_constraint(
@@ -1272,7 +1273,7 @@ class AlterConstraint(IndexOperation):
         )
 
     def describe(self):
-        return f"Alter constraint {self.name} on {self.model_name}"
+        return self._description
 
     @property
     def migration_name_fragment(self):
