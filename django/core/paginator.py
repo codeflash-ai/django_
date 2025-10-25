@@ -174,7 +174,17 @@ class Paginator(BasePaginator):
 
     def page(self, number):
         """Return a Page object for the given 1-based page number."""
-        number = self.validate_number(number)
+        try:
+            if isinstance(number, float) and not number.is_integer():
+                raise ValueError
+            number = int(number)
+        except (TypeError, ValueError):
+            raise PageNotAnInteger(self.error_messages["invalid_page"])
+        if number < 1:
+            raise EmptyPage(self.error_messages["min_page"])
+        if number > self.num_pages:
+            raise EmptyPage(self.error_messages["no_results"])
+
         bottom = (number - 1) * self.per_page
         top = bottom + self.per_page
         if top + self.orphans >= self.count:
