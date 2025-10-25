@@ -142,7 +142,7 @@ class ContentFile(File):
         pass
 
     def write(self, data):
-        self.__dict__.pop("size", None)  # Clear the computed size.
+        self.size = None  # Clear the computed size.
         return self.file.write(data)
 
 
