@@ -481,8 +481,10 @@ class Urlizer:
     @staticmethod
     def is_email_simple(value):
         """Return True if value looks like an email address."""
+        if not hasattr(Urlizer, "_email_validator"):
+            Urlizer._email_validator = EmailValidator(allowlist=[])
         try:
-            EmailValidator(allowlist=[])(value)
+            Urlizer._email_validator(value)
         except ValidationError:
             return False
         return True
