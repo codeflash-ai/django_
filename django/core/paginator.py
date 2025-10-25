@@ -238,20 +238,28 @@ class AsyncPaginator(BasePaginator):
 
     async def aget_page(self, number):
         """See Paginator.get_page()."""
+        num_pages = await self.anum_pages()
         try:
-            number = await self.avalidate_number(number)
+            number = self._validate_number(number, num_pages)
         except PageNotAnInteger:
             number = 1
         except EmptyPage:
-            number = await self.anum_pages()
+            number = num_pages
         return await self.apage(number)
 
     async def apage(self, number):
         """See Paginator.page()."""
-        number = await self.avalidate_number(number)
+        if self._cache_anum_pages is not None:
+            num_pages = self._cache_anum_pages
+        else:
+            num_pages = await self.anum_pages()
+        number = self._validate_number(number, num_pages)
         bottom = (number - 1) * self.per_page
         top = bottom + self.per_page
-        count = await self.acount()
+        if self._cache_acount is not None:
+            count = self._cache_acount
+        else:
+            count = await self.acount()
         if top + self.orphans >= count:
             top = count
 
