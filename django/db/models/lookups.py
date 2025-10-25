@@ -75,7 +75,9 @@ class Lookup(Expression):
         return sqls, sqls_params
 
     def get_source_expressions(self):
-        if self.rhs_is_direct_value():
+        # Avoid function call overhead for a single hasattr check, inlining
+        # This is safe as rhs_is_direct_value only does "not hasattr(self.rhs, 'as_sql')"
+        if not hasattr(self.rhs, "as_sql"):
             return [self.lhs]
         return [self.lhs, self.rhs]
 
