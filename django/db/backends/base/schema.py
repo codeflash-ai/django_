@@ -205,6 +205,7 @@ class BaseDatabaseSchemaEditor:
                 cursor.execute(sql, params)
 
     def quote_name(self, name):
+        # This call is the actual interface; cannot optimize further here
         return self.connection.ops.quote_name(name)
 
     def table_sql(self, model):
@@ -489,7 +490,38 @@ class BaseDatabaseSchemaEditor:
 
     def effective_default(self, field):
         """Return a field's effective database default value."""
-        return field.get_db_prep_save(self._effective_default(field), self.connection)
+        # Inlines _effective_default to avoid function call overhead
+        if field.has_default():
+            default = field.get_default()
+        elif getattr(field, "generated", False):
+            default = None
+        elif (
+            not field.null
+            and getattr(field, "blank", False)
+            and getattr(field, "empty_strings_allowed", False)
+        ):
+            if field.get_internal_type() == "BinaryField":
+                default = b""
+            else:
+                default = ""
+        elif getattr(field, "auto_now", False) or getattr(field, "auto_now_add", False):
+            internal_type = field.get_internal_type()
+            if internal_type == "DateTimeField":
+                # Avoid repeated import; use imported value from editor's module if available
+                from django.utils import timezone
+
+                default = timezone.now()
+            else:
+                from datetime import datetime
+
+                default = datetime.now()
+                if internal_type == "DateField":
+                    default = default.date()
+                elif internal_type == "TimeField":
+                    default = default.time()
+        else:
+            default = None
+        return field.get_db_prep_save(default, self.connection)
 
     def quote_value(self, value):
         """
@@ -1341,20 +1373,24 @@ class BaseDatabaseSchemaEditor:
         Return a (sql, params) fragment to add or drop (depending on the drop
         argument) a default to new_field's column.
         """
-        new_default = self.effective_default(new_field)
-        default = self._column_default_sql(new_field)
-        params = [new_default]
-
+        # Avoid calling effective_default if drop is True, since it's not used
         if drop:
-            params = []
-        elif self.connection.features.requires_literal_defaults:
-            # Some databases (Oracle) can't take defaults as a parameter
-            # If this is the case, the SchemaEditor for that database should
-            # implement prepare_default().
+            new_default = None
+        else:
+            new_default = self.effective_default(new_field)
+
+        # _column_default_sql is a trivial function; assign once if needed
+        default = "%s" if drop else self._column_default_sql(new_field)
+        params = [] if drop else [new_default]
+
+        # Literal defaults: call prepare_default only if necessary
+        if not drop and self.connection.features.requires_literal_defaults:
             default = self.prepare_default(new_default)
             params = []
 
+        # Only call db_parameters once
         new_db_params = new_field.db_parameters(connection=self.connection)
+
         if drop:
             if new_field.null:
                 sql = self.sql_alter_column_no_default_null
@@ -1362,13 +1398,16 @@ class BaseDatabaseSchemaEditor:
                 sql = self.sql_alter_column_no_default
         else:
             sql = self.sql_alter_column_default
+
+        # Cache quote_name() result to variable to avoid repeated method calls
+        column_quoted = self.quote_name(new_field.column)
+        sql_statement = sql % {
+            "column": column_quoted,
+            "type": new_db_params["type"],
+            "default": default,
+        }
         return (
-            sql
-            % {
-                "column": self.quote_name(new_field.column),
-                "type": new_db_params["type"],
-                "default": default,
-            },
+            sql_statement,
             params,
         )
 
