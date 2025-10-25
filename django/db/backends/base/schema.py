@@ -154,6 +154,7 @@ class BaseDatabaseSchemaEditor:
         if self.collect_sql:
             self.collected_sql = []
         self.atomic_migration = self.connection.features.can_rollback_ddl and atomic
+        self._quote_name = self.connection.ops.quote_name
 
     # State-managing methods
 
@@ -205,7 +206,7 @@ class BaseDatabaseSchemaEditor:
                 cursor.execute(sql, params)
 
     def quote_name(self, name):
-        return self.connection.ops.quote_name(name)
+        return self._quote_name(name)
 
     def table_sql(self, model):
         """Take a model and return its table definition."""
@@ -1623,11 +1624,12 @@ class BaseDatabaseSchemaEditor:
         return statement
 
     def _rename_index_sql(self, model, old_name, new_name):
+        quote_name = self._quote_name
         return Statement(
             self.sql_rename_index,
-            table=Table(model._meta.db_table, self.quote_name),
-            old_name=self.quote_name(old_name),
-            new_name=self.quote_name(new_name),
+            table=Table(model._meta.db_table, quote_name),
+            old_name=quote_name(old_name),
+            new_name=quote_name(new_name),
         )
 
     def _create_on_delete_sql(self, model, field):
