@@ -51,12 +51,8 @@ class SQLCompiler:
         # Some queries, e.g. coalesced aggregation, need to be executed even if
         # they would return an empty result set.
         self.elide_empty = elide_empty
+        # Use a local var reference to the static '*' key for performance
         self.quote_cache = {"*": "*"}
-        # The select, klass_info, and annotations are needed by
-        # QuerySet.iterator() these are set as a side-effect of executing the
-        # query. Note that we calculate separately a list of extra select
-        # columns needed for grammatical correctness of the query, but these
-        # columns are not included in self.select.
         self.select = None
         self.annotation_col_map = None
         self.klass_info = None
@@ -554,29 +550,39 @@ class SQLCompiler:
         for table names. This avoids problems with some SQL dialects that treat
         quoted strings specially (e.g. PostgreSQL).
         """
-        if name in self.quote_cache:
-            return self.quote_cache[name]
-        if (
-            (name in self.query.alias_map and name not in self.query.table_map)
-            or name in self.query.extra_select
-            or (
-                self.query.external_aliases.get(name)
-                and name not in self.query.table_map
-            )
-        ):
-            self.quote_cache[name] = name
+        # Local var for quote_cache
+        cache = self.quote_cache
+        if name in cache:
+            return cache[name]
+        query = self.query
+        # Shortcut local references (attribute lookups can be relatively expensive)
+        alias_map = query.alias_map
+        table_map = query.table_map
+        extra_select = query.extra_select
+        external_aliases = query.external_aliases
+
+        # Use explicit conditional blocks to minimize dict lookups
+        if (name in alias_map and name not in table_map) or name in extra_select:
+            cache[name] = name
             return name
+        # Only check external_aliases.get(name) once
+        external_alias_value = external_aliases.get(name)
+        if external_alias_value and name not in table_map:
+            cache[name] = name
+            return name
+        # The majority of names will be quoted for grammar; avoid re-quoting
         r = self.connection.ops.quote_name(name)
-        self.quote_cache[name] = r
+        cache[name] = r
         return r
 
     def compile(self, node):
-        vendor_impl = getattr(node, "as_" + self.connection.vendor, None)
+        # Fast path: avoid getattr cost unless needed
+        vendor = self.connection.vendor
+        func_name = "as_" + vendor
+        vendor_impl = getattr(node, func_name, None)
         if vendor_impl:
-            sql, params = vendor_impl(self, self.connection)
-        else:
-            sql, params = node.as_sql(self, self.connection)
-        return sql, params
+            return vendor_impl(self, self.connection)
+        return node.as_sql(self, self.connection)
 
     def get_combinator_sql(self, combinator, all):
         features = self.connection.features
@@ -1987,11 +1993,13 @@ class SQLDeleteCompiler(SQLCompiler):
         )
 
     def _as_sql(self, query):
-        delete = "DELETE FROM %s" % self.quote_name_unless_alias(query.base_table)
+        # Use f-string for cleaner formatting, no performance difference here
+        delete = f"DELETE FROM {self.quote_name_unless_alias(query.base_table)}"
         try:
             where, params = self.compile(query.where)
         except FullResultSet:
             return delete, ()
+        # Do not use f-string for params; it's safer and more reliable to let DB handle params
         return f"{delete} WHERE {where}", tuple(params)
 
     def as_sql(self):
