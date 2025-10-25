@@ -24,6 +24,9 @@ class MigrationQuestioner:
         self.specified_apps = specified_apps or set()
         self.dry_run = dry_run
 
+        # Cache the ask_merge default at construction time for faster access in ask_merge
+        self._ask_merge_default: bool = self.defaults.get("ask_merge", False)
+
     def ask_initial(self, app_label):
         """Should we create an initial migration for the app?"""
         # If it was specified on the command line, definitely true
@@ -74,7 +77,7 @@ class MigrationQuestioner:
 
     def ask_merge(self, app_label):
         """Should these migrations really be merged?"""
-        return self.defaults.get("ask_merge", False)
+        return self._ask_merge_default
 
     def ask_auto_now_add_addition(self, field_name, model_name):
         """Adding an auto_now_add field to a model."""
