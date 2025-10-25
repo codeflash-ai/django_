@@ -154,6 +154,7 @@ class BaseDatabaseSchemaEditor:
         if self.collect_sql:
             self.collected_sql = []
         self.atomic_migration = self.connection.features.can_rollback_ddl and atomic
+        self._quote_name = self.connection.ops.quote_name
 
     # State-managing methods
 
@@ -205,7 +206,7 @@ class BaseDatabaseSchemaEditor:
                 cursor.execute(sql, params)
 
     def quote_name(self, name):
-        return self.connection.ops.quote_name(name)
+        return self._quote_name(name)
 
     def table_sql(self, model):
         """Take a model and return its table definition."""
@@ -1723,10 +1724,11 @@ class BaseDatabaseSchemaEditor:
         )
 
     def _rename_field_sql(self, table, old_field, new_field, new_type):
+        quote_name = self._quote_name
         return self.sql_rename_column % {
-            "table": self.quote_name(table),
-            "old_column": self.quote_name(old_field.column),
-            "new_column": self.quote_name(new_field.column),
+            "table": quote_name(table),
+            "old_column": quote_name(old_field.column),
+            "new_column": quote_name(new_field.column),
             "type": new_type,
         }
 
