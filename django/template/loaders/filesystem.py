@@ -19,8 +19,8 @@ class Loader(BaseLoader):
 
     def get_contents(self, origin):
         try:
-            with open(origin.name, encoding=self.engine.file_charset) as fp:
-                return fp.read()
+            with open(origin.name, "rb") as fp:
+                return fp.read().decode(self.engine.file_charset)
         except FileNotFoundError:
             raise TemplateDoesNotExist(origin)
 
