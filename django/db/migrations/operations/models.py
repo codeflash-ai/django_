@@ -1172,10 +1172,7 @@ class AddConstraint(IndexOperation):
         )
 
     def describe(self):
-        return "Create constraint %s on model %s" % (
-            self.constraint.name,
-            self.model_name,
-        )
+        return f"Create constraint {self.constraint.name} on model {self.model_name}"
 
     @property
     def migration_name_fragment(self):
