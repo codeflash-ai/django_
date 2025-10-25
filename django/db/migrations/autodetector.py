@@ -77,21 +77,22 @@ class MigrationAutodetector:
         Used for full comparison for rename/alter; sometimes a single-level
         deconstruction will not compare correctly.
         """
-        if isinstance(obj, list):
+        obj_type = type(obj)
+        if obj_type is list:
             return [self.deep_deconstruct(value) for value in obj]
-        elif isinstance(obj, tuple):
+        elif obj_type is tuple:
             return tuple(self.deep_deconstruct(value) for value in obj)
-        elif isinstance(obj, dict):
+        elif obj_type is dict:
             return {key: self.deep_deconstruct(value) for key, value in obj.items()}
-        elif isinstance(obj, functools.partial):
+        elif obj_type is functools.partial:
             return (
                 obj.func,
                 self.deep_deconstruct(obj.args),
                 self.deep_deconstruct(obj.keywords),
             )
-        elif isinstance(obj, COMPILED_REGEX_TYPE):
+        elif obj_type is COMPILED_REGEX_TYPE:
             return RegexObject(obj)
-        elif isinstance(obj, type):
+        elif obj_type is type:
             # If this is a type that implements 'deconstruct' as an instance
             # method, avoid treating this as being deconstructible itself - see
             # #22951
@@ -102,12 +103,15 @@ class MigrationAutodetector:
                 # we have a field which also returns a name
                 deconstructed = deconstructed[1:]
             path, args, kwargs = deconstructed
+            # Pre-build lists/dicts with comprehensions for maximum throughput
+            # Avoid unnecessary variable allocations
             return (
                 path,
                 [self.deep_deconstruct(value) for value in args],
                 {key: self.deep_deconstruct(value) for key, value in kwargs.items()},
             )
         else:
+            # Return base object by default
             return obj
 
     def only_relation_agnostic_fields(self, fields):
