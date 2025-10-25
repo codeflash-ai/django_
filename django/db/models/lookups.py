@@ -289,17 +289,21 @@ class FieldGetDbPrepValueIterableMixin(FieldGetDbPrepValueMixin):
             return self.rhs
         contains_expr = False
         prepared_values = []
+        # Hoist attribute lookups out of loop for better performance
+        lhs_output_field = getattr(self.lhs, "output_field", None)
+        prep_value_func = (
+            getattr(lhs_output_field, "get_prep_value", None)
+            if lhs_output_field
+            else None
+        )
+        prepare_rhs = self.prepare_rhs
         for rhs_value in self.rhs:
             if hasattr(rhs_value, "resolve_expression"):
                 # An expression will be handled by the database but can coexist
                 # alongside real values.
                 contains_expr = True
-            elif (
-                self.prepare_rhs
-                and hasattr(self.lhs, "output_field")
-                and hasattr(self.lhs.output_field, "get_prep_value")
-            ):
-                rhs_value = self.lhs.output_field.get_prep_value(rhs_value)
+            elif prepare_rhs and prep_value_func:
+                rhs_value = prep_value_func(rhs_value)
             prepared_values.append(rhs_value)
         if contains_expr:
             return ExpressionList(
@@ -307,7 +311,7 @@ class FieldGetDbPrepValueIterableMixin(FieldGetDbPrepValueMixin):
                     # Expression defaults `str` to field references while
                     # lookups default them to literal values.
                     (
-                        Value(prep_value, self.lhs.output_field)
+                        Value(prep_value, lhs_output_field)
                         if isinstance(prep_value, str)
                         else prep_value
                     )
