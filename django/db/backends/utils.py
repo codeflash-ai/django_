@@ -307,8 +307,7 @@ def names_digest(*args, length):
     identifying names.
     """
     h = md5(usedforsecurity=False)
-    for arg in args:
-        h.update(arg.encode())
+    h.update("".join(args).encode())
     return h.hexdigest()[:length]
 
 
