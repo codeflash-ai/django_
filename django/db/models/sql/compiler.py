@@ -1150,25 +1150,36 @@ class SQLCompiler:
         """
         result = []
         params = []
+        query = self.query
+
+        # Pre-fetch frequently used attributes and methods for performance.
+        alias_map = query.alias_map
+        alias_refcount = query.alias_refcount
+        compile = self.compile
+        result_append = result.append
+        params_extend = params.extend
+
         # Copy alias_map to a tuple in case Join.as_sql() subclasses (objects
         # in alias_map) alter compiler.query.alias_map. That would otherwise
         # raise "RuntimeError: dictionary changed size during iteration".
-        for alias, from_clause in tuple(self.query.alias_map.items()):
-            if not self.query.alias_refcount[alias]:
+        for alias, from_clause in tuple(alias_map.items()):
+            if not alias_refcount[alias]:
                 continue
-            clause_sql, clause_params = self.compile(from_clause)
-            result.append(clause_sql)
-            params.extend(clause_params)
-        for t in self.query.extra_tables:
-            alias, _ = self.query.table_alias(t)
+            clause_sql, clause_params = compile(from_clause)
+            result_append(clause_sql)
+            params_extend(clause_params)
+        extra_tables = query.extra_tables
+        table_alias = query.table_alias
+        result_append_comma = result.append  # reuse alias
+        quote_name = self.quote_name_unless_alias
+        for t in extra_tables:
+            alias, _ = table_alias(t)
             # Only add the alias if it's not already present (the table_alias()
             # call increments the refcount, so an alias refcount of one means
             # this is the only reference).
-            if (
-                alias not in self.query.alias_map
-                or self.query.alias_refcount[alias] == 1
-            ):
-                result.append(", %s" % self.quote_name_unless_alias(alias))
+            if alias not in alias_map or alias_refcount[alias] == 1:
+                # String concatenation changed to f-string for performance.
+                result_append_comma(f", {quote_name(alias)}")
         return result, params
 
     def get_related_selections(
