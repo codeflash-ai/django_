@@ -315,16 +315,32 @@ class MiddlewareMixin:
         Async version of __call__ that is swapped in when an async request
         is running.
         """
+
+        # Resolve sync_to_async adapters once, outside the request path.
+        # This avoids repeated construction of the closure on every call.
+        if not hasattr(self, "_sync_process_request"):
+            if hasattr(self, "process_request"):
+                self._sync_process_request = sync_to_async(
+                    self.process_request,
+                    thread_sensitive=True,
+                )
+            else:
+                self._sync_process_request = None
+
+        if not hasattr(self, "_sync_process_response"):
+            if hasattr(self, "process_response"):
+                self._sync_process_response = sync_to_async(
+                    self.process_response,
+                    thread_sensitive=True,
+                )
+            else:
+                self._sync_process_response = None
+
         response = None
-        if hasattr(self, "process_request"):
-            response = await sync_to_async(
-                self.process_request,
-                thread_sensitive=True,
-            )(request)
+
+        if self._sync_process_request is not None:
+            response = await self._sync_process_request(request)
         response = response or await self.get_response(request)
-        if hasattr(self, "process_response"):
-            response = await sync_to_async(
-                self.process_response,
-                thread_sensitive=True,
-            )(request, response)
+        if self._sync_process_response is not None:
+            response = await self._sync_process_response(request, response)
         return response
