@@ -135,7 +135,7 @@ class ContentFile(File):
         return True
 
     def open(self, mode=None):
-        self.seek(0)
+        self.file.seek(0)
         return self
 
     def close(self):
