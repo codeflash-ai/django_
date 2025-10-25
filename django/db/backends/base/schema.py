@@ -1614,11 +1614,31 @@ class BaseDatabaseSchemaEditor:
         # Remove all deferred statements referencing the deleted index.
         table_name = statement.parts["table"].table
         index_name = statement.parts["name"]
-        for sql in list(self.deferred_sql):
-            if isinstance(sql, Statement) and sql.references_index(
+
+        # Use a single-pass list comprehension to avoid repeated removal cost
+        # and avoid copying unless necessary (deferred_sql is not huge/tight for memory)
+        # Performance improves since we minimize list rescanning & mutation.
+        deferred_sql = self.deferred_sql
+        # If there are no Statement instances at all, this becomes a no-op
+
+        # Only build a new list if any removal is needed.
+        needs_filter = False
+        for sql_obj in deferred_sql:
+            if isinstance(sql_obj, Statement) and sql_obj.references_index(
                 table_name, index_name
             ):
-                self.deferred_sql.remove(sql)
+                needs_filter = True
+                break
+
+        if needs_filter:
+            self.deferred_sql = [
+                sql_obj
+                for sql_obj in deferred_sql
+                if not (
+                    isinstance(sql_obj, Statement)
+                    and sql_obj.references_index(table_name, index_name)
+                )
+            ]
 
         return statement
 
