@@ -1500,29 +1500,47 @@ class BaseDatabaseSchemaEditor:
         The name is divided into 3 parts: the table name, the column names,
         and a unique digest and suffix.
         """
-        _, table_name = split_identifier(table_name)
+        # Inline split_identifier handling to avoid extra function call overhead
+        if '"."' in table_name:
+            namespace, table_name_only = table_name.split('"."')
+            table_name_only = table_name_only.strip('"')
+        else:
+            table_name_only = table_name.strip('"')
+
         hash_suffix_part = "%s%s" % (
-            names_digest(table_name, *column_names, length=8),
+            names_digest(table_name_only, *column_names, length=8),
             suffix,
         )
         max_length = self.connection.ops.max_name_length() or 200
-        # If everything fits into max_length, use that name.
-        index_name = "%s_%s_%s" % (table_name, "_".join(column_names), hash_suffix_part)
+
+        column_names_joined = "_".join(column_names)
+        # Build index_name up front for possible multiple uses
+        index_name = f"{table_name_only}_{column_names_joined}_{hash_suffix_part}"
+
         if len(index_name) <= max_length:
             return index_name
+
         # Shorten a long suffix.
-        if len(hash_suffix_part) > max_length / 3:
-            hash_suffix_part = hash_suffix_part[: max_length // 3]
-        other_length = (max_length - len(hash_suffix_part)) // 2 - 1
-        index_name = "%s_%s_%s" % (
-            table_name[:other_length],
-            "_".join(column_names)[:other_length],
-            hash_suffix_part,
-        )
+        len_hash_suffix_part = len(hash_suffix_part)
+        max_length_third = max_length // 3
+        if len_hash_suffix_part > max_length_third:
+            hash_suffix_part = hash_suffix_part[:max_length_third]
+            len_hash_suffix_part = len(hash_suffix_part)  # update for next calculation
+
+        # Estimate split to maximize characters for each part
+        other_length = (max_length - len_hash_suffix_part) // 2 - 1
+
+        table_cut = table_name_only[:other_length]
+        columns_cut = column_names_joined[:other_length]
+
+        index_name = f"{table_cut}_{columns_cut}_{hash_suffix_part}"
+
+        first_char = index_name[0]
         # Prepend D if needed to prevent the name from starting with an
         # underscore or a number (not permitted on Oracle).
-        if index_name[0] == "_" or index_name[0].isdigit():
-            index_name = "D%s" % index_name[:-1]
+        if first_char == "_" or first_char.isdigit():
+            # Only modify last character per original logic
+            index_name = f"D{index_name[:-1]}"
         return index_name
 
     def _get_index_tablespace_sql(self, model, fields, db_tablespace=None):
