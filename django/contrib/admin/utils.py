@@ -2,7 +2,7 @@ import datetime
 import decimal
 import json
 from collections import defaultdict
-from functools import reduce
+from functools import lru_cache, reduce
 from operator import or_
 
 from django.contrib.auth import get_user_model
@@ -94,7 +94,9 @@ def quote(s):
     Similar to urllib.parse.quote(), except that the quoting is slightly
     different so that it doesn't get automatically unquoted by the web browser.
     """
-    return s.translate(QUOTE_MAP) if isinstance(s, str) else s
+    if isinstance(s, str):
+        return _quote_cached(s)
+    return s
 
 
 def unquote(s):
@@ -613,3 +615,9 @@ def _get_changed_field_labels_from_form(form, changed_data):
             verbose_field_name = field_name
         changed_field_labels.append(str(verbose_field_name))
     return changed_field_labels
+
+
+@lru_cache(maxsize=1024)
+def _quote_cached(s: str) -> str:
+    # Internal helper for caching; honored only for str input.
+    return s.translate(QUOTE_MAP)
