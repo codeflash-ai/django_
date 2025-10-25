@@ -1970,12 +1970,14 @@ class SQLDeleteCompiler(SQLCompiler):
     def _expr_refs_base_model(cls, expr, base_model):
         if isinstance(expr, Query):
             return expr.model == base_model
-        if not hasattr(expr, "get_source_expressions"):
+        get_exprs = getattr(expr, "get_source_expressions", None)
+        if get_exprs is None:
             return False
-        return any(
-            cls._expr_refs_base_model(source_expr, base_model)
-            for source_expr in expr.get_source_expressions()
-        )
+        # Avoid generator + any overhead, use for-loop short-circuit
+        for source_expr in get_exprs():
+            if cls._expr_refs_base_model(source_expr, base_model):
+                return True
+        return False
 
     @cached_property
     def contains_self_reference_subquery(self):
