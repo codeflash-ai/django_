@@ -30,6 +30,8 @@ from django.urls import get_script_prefix, set_script_prefix
 from django.utils.translation import deactivate
 from django.utils.version import PYPY
 
+_reset_queries_connected = False
+
 try:
     import jinja2
 except ImportError:
@@ -737,8 +739,11 @@ class CaptureQueriesContext:
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.connection.force_debug_cursor = self.force_debug_cursor
-        if self.reset_queries_disconnected:
+        global _reset_queries_connected
+        # Only (re)connect if we previously disconnected and not already connected
+        if self.reset_queries_disconnected and not _reset_queries_connected:
             request_started.connect(reset_queries)
+            _reset_queries_connected = True
         if exc_type is not None:
             return
         self.final_queries = len(self.connection.queries_log)

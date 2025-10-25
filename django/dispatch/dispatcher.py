@@ -55,6 +55,7 @@ class Signal:
         # .disconnect() is called and populated on send().
         self.sender_receivers_cache = weakref.WeakKeyDictionary() if use_caching else {}
         self._dead_receivers = False
+        self._lookup_keys = set()
 
     def connect(self, receiver, sender=None, weak=True, dispatch_uid=None):
         """
@@ -119,10 +120,7 @@ class Signal:
             receiver = ref(receiver)
             weakref.finalize(receiver_object, self._flag_dead_receivers)
 
-        # Keep a weakref to sender if possible to ensure associated receivers
-        # are cleared if it gets garbage collected. This ensures there is no
-        # id(sender) collisions for distinct senders with non-overlapping
-        # lifetimes.
+        # Manage sender weakref as before
         sender_ref = None
         if sender is not None:
             try:
@@ -132,9 +130,13 @@ class Signal:
 
         with self.lock:
             self._clear_dead_receivers()
-            if not any(r_key == lookup_key for r_key, _, _, _ in self.receivers):
+            # Use set for fast lookup, reduces connect time from O(n) to O(1)
+            if lookup_key not in self._lookup_keys:
                 self.receivers.append((lookup_key, receiver, sender_ref, is_async))
-            self.sender_receivers_cache.clear()
+                self._lookup_keys.add(lookup_key)
+            # Only clear sender_receivers_cache if caching is used
+            if self.use_caching:
+                self.sender_receivers_cache.clear()
 
     def disconnect(self, receiver=None, sender=None, dispatch_uid=None):
         """
