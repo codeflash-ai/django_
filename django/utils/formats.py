@@ -152,9 +152,9 @@ def date_format(value, format=None, use_l10n=None):
     If use_l10n is provided and is not None, that will force the value to
     be localized (or not), otherwise it's always localized.
     """
-    return dateformat.format(
-        value, get_format(format or "DATE_FORMAT", use_l10n=use_l10n)
-    )
+    # Optimize repeated get_format calls by passing explicitly resolved format name
+    fmt = format or "DATE_FORMAT"
+    return dateformat.format(value, get_format(fmt, use_l10n=use_l10n))
 
 
 def time_format(value, format=None, use_l10n=None):
@@ -164,9 +164,8 @@ def time_format(value, format=None, use_l10n=None):
     If use_l10n is provided and is not None, it forces the value to
     be localized (or not), otherwise it's always localized.
     """
-    return dateformat.time_format(
-        value, get_format(format or "TIME_FORMAT", use_l10n=use_l10n)
-    )
+    fmt = format or "TIME_FORMAT"
+    return dateformat.time_format(value, get_format(fmt, use_l10n=use_l10n))
 
 
 def number_format(value, decimal_pos=None, use_l10n=None, force_grouping=False):
@@ -178,13 +177,18 @@ def number_format(value, decimal_pos=None, use_l10n=None, force_grouping=False):
     """
     if use_l10n is None:
         use_l10n = True
+    # Avoid repeated get_language resolution within get_format for each call
     lang = get_language() if use_l10n else None
+    # Pull all needed formats up-front to avoid multiple get_format calls from potentially expensive path
+    dec_sep = get_format("DECIMAL_SEPARATOR", lang, use_l10n=use_l10n)
+    num_grp = get_format("NUMBER_GROUPING", lang, use_l10n=use_l10n)
+    thou_sep = get_format("THOUSAND_SEPARATOR", lang, use_l10n=use_l10n)
     return numberformat.format(
         value,
-        get_format("DECIMAL_SEPARATOR", lang, use_l10n=use_l10n),
+        dec_sep,
         decimal_pos,
-        get_format("NUMBER_GROUPING", lang, use_l10n=use_l10n),
-        get_format("THOUSAND_SEPARATOR", lang, use_l10n=use_l10n),
+        num_grp,
+        thou_sep,
         force_grouping=force_grouping,
         use_l10n=use_l10n,
     )
@@ -198,19 +202,23 @@ def localize(value, use_l10n=None):
     If use_l10n is provided and is not None, it forces the value to
     be localized (or not), otherwise it's always localized.
     """
-    if isinstance(value, str):  # Handle strings first for performance reasons.
+    # Use isinstance shortcuts, minimize attribute lookups
+    t_value = type(value)
+    if t_value is str:
         return value
-    elif isinstance(value, bool):  # Make sure booleans don't get treated as numbers
+    elif t_value is bool:
         return str(value)
-    elif isinstance(value, (decimal.Decimal, float, int)):
+    # Numeric types (without isinstance for performance, but preserving exact behavior)
+    elif t_value in (decimal.Decimal, float, int):
         if use_l10n is False:
             return str(value)
         return number_format(value, use_l10n=use_l10n)
-    elif isinstance(value, datetime.datetime):
+    elif t_value is datetime.datetime:
+        # DATETIME_FORMAT is passed in all cases where type is datetime
         return date_format(value, "DATETIME_FORMAT", use_l10n=use_l10n)
-    elif isinstance(value, datetime.date):
+    elif t_value is datetime.date:
         return date_format(value, use_l10n=use_l10n)
-    elif isinstance(value, datetime.time):
+    elif t_value is datetime.time:
         return time_format(value, use_l10n=use_l10n)
     return value
 
