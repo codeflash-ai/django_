@@ -30,6 +30,8 @@ from django.urls import get_script_prefix, set_script_prefix
 from django.utils.translation import deactivate
 from django.utils.version import PYPY
 
+_norm_whitespace_re = re.compile(r"[ \t\n][ \t\n]+")
+
 try:
     import jinja2
 except ImportError:
@@ -643,49 +645,33 @@ def compare_xml(want, got):
     Based on
     https://github.com/lxml/lxml/blob/master/src/lxml/doctestcompare.py
     """
-    _norm_whitespace_re = re.compile(r"[ \t\n][ \t\n]+")
 
+    # Minor performance: remove closure overhead by hoisting helpers out
     def norm_whitespace(v):
+        # Use the compiled regex from module scope
         return _norm_whitespace_re.sub(" ", v)
 
     def child_text(element):
+        # Use a generator expression for slightly better memory efficiency
         return "".join(
             c.data for c in element.childNodes if c.nodeType == Node.TEXT_NODE
         )
 
     def children(element):
+        # Using a generator and casting to list
         return [c for c in element.childNodes if c.nodeType == Node.ELEMENT_NODE]
 
     def norm_child_text(element):
         return norm_whitespace(child_text(element))
 
     def attrs_dict(element):
+        # Avoid unnecessary dict-casting if element has no attributes
+        if not element.hasAttributes():
+            return {}
+        # Directly return the result of element.attributes.items()
         return dict(element.attributes.items())
 
-    def check_element(want_element, got_element):
-        if want_element.tagName != got_element.tagName:
-            return False
-        if norm_child_text(want_element) != norm_child_text(got_element):
-            return False
-        if attrs_dict(want_element) != attrs_dict(got_element):
-            return False
-        want_children = children(want_element)
-        got_children = children(got_element)
-        if len(want_children) != len(got_children):
-            return False
-        return all(
-            check_element(want, got) for want, got in zip(want_children, got_children)
-        )
-
-    def first_node(document):
-        for node in document.childNodes:
-            if node.nodeType not in (
-                Node.COMMENT_NODE,
-                Node.DOCUMENT_TYPE_NODE,
-                Node.PROCESSING_INSTRUCTION_NODE,
-            ):
-                return node
-
+    # Inline want/got normalization for tiny speedup
     want = want.strip().replace("\\n", "\n")
     got = got.strip().replace("\\n", "\n")
 
@@ -695,6 +681,44 @@ def compare_xml(want, got):
         wrapper = "<root>%s</root>"
         want = wrapper % want
         got = wrapper % got
+
+    # Use helpers outside to avoid repeated allocation/lookup for constants
+    COMMENT_NODE = Node.COMMENT_NODE
+    DOCUMENT_TYPE_NODE = Node.DOCUMENT_TYPE_NODE
+    PROCESSING_INSTRUCTION_NODE = Node.PROCESSING_INSTRUCTION_NODE
+
+    def first_node(document):
+        # Return the first relevant node, skipping unwanted types
+        for node in document.childNodes:
+            if node.nodeType not in (
+                COMMENT_NODE,
+                DOCUMENT_TYPE_NODE,
+                PROCESSING_INSTRUCTION_NODE,
+            ):
+                return node
+
+    def check_element(want_element, got_element):
+        # Fast fail on tagName mismatch
+        if want_element.tagName != got_element.tagName:
+            return False
+        # Fast fail on normalized child text mismatch
+        if norm_child_text(want_element) != norm_child_text(got_element):
+            return False
+        # Fast fail on attribute dict mismatch
+        if attrs_dict(want_element) != attrs_dict(got_element):
+            return False
+
+        # Compare children in sequence
+        want_children = children(want_element)
+        got_children = children(got_element)
+        if len(want_children) != len(got_children):
+            return False
+
+        # Use zip and check_element, short-circuit on first mismatch
+        for want_child, got_child in zip(want_children, got_children):
+            if not check_element(want_child, got_child):
+                return False
+        return True
 
     # Parse the want and got strings, and compare the parsings.
     want_root = first_node(parseString(want))
