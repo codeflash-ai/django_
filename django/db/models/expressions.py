@@ -441,7 +441,10 @@ class BaseExpression:
         return refs
 
     def copy(self):
-        return copy.copy(self)
+        cls = self.__class__
+        clone = cls.__new__(cls)
+        clone.__dict__.update(self.__dict__)
+        return clone
 
     def prefix_references(self, prefix):
         clone = self.copy()
@@ -1812,7 +1815,9 @@ class Subquery(BaseExpression, Combinable):
         return resolved
 
     def copy(self):
-        clone = super().copy()
+        cls = self.__class__
+        clone = cls.__new__(cls)
+        clone.__dict__.update(self.__dict__)
         clone.query = clone.query.clone()
         return clone
 
