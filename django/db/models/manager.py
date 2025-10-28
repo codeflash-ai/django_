@@ -1,4 +1,3 @@
-import copy
 import inspect
 from functools import wraps
 from importlib import import_module
@@ -19,7 +18,11 @@ class BaseManager:
     use_in_migrations = False
 
     def __new__(cls, *args, **kwargs):
-        # Capture the arguments to make returning them trivial.
+        # Avoid capturing empty tuples for speed in common case.
+        if not args and not kwargs:
+            obj = super().__new__(cls)
+            obj._constructor_args = ((), {})
+            return obj
         obj = super().__new__(cls)
         obj._constructor_args = (args, kwargs)
         return obj
@@ -134,9 +137,15 @@ class BaseManager:
         BaseManager.creation_counter += 1
 
     def db_manager(self, using=None, hints=None):
-        obj = copy.copy(self)
-        obj._db = using or self._db
-        obj._hints = hints or self._hints
+        cls = self.__class__
+        # Use fast instance creation and avoid __init__ for performance
+        obj = object.__new__(cls)
+        # Copy relevant attributes
+        obj._constructor_args = self._constructor_args
+        obj.model = self.model
+        obj.name = self.name
+        obj._db = self._db if using is None else using
+        obj._hints = self._hints if hints is None else hints
         return obj
 
     @property
