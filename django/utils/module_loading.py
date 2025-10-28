@@ -26,8 +26,10 @@ def import_string(dotted_path):
     except ValueError as err:
         raise ImportError("%s doesn't look like a module path" % dotted_path) from err
 
+    # Local variable for faster access
+    _cached_import = cached_import
     try:
-        return cached_import(module_path, class_name)
+        return _cached_import(module_path, class_name)
     except AttributeError as err:
         raise ImportError(
             'Module "%s" does not define a "%s" attribute/class'

@@ -25,14 +25,16 @@ def get_default_password_validators():
 def get_password_validators(validator_config):
     validators = []
     for validator in validator_config:
+        # Cache the name locally to avoid repeated dict lookup
+        name = validator["NAME"]
         try:
-            klass = import_string(validator["NAME"])
+            klass = import_string(name)
         except ImportError:
             msg = (
                 "The module in NAME could not be imported: %s. Check your "
                 "AUTH_PASSWORD_VALIDATORS setting."
             )
-            raise ImproperlyConfigured(msg % validator["NAME"])
+            raise ImproperlyConfigured(msg % name)
         validators.append(klass(**validator.get("OPTIONS", {})))
 
     return validators
