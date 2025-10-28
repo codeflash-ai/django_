@@ -43,6 +43,8 @@ BOOLEAN_ATTRIBUTES = {
 
 
 def normalize_whitespace(string):
+    if not any(c in string for c in "\t\n\f\r "):
+        return string
     return ASCII_WHITESPACE.sub(" ", string)
 
 
@@ -77,8 +79,10 @@ class Element:
         if isinstance(element, str):
             element = normalize_whitespace(element)
             if self.children and isinstance(self.children[-1], str):
-                self.children[-1] += element
-                self.children[-1] = normalize_whitespace(self.children[-1])
+                combined = self.children[-1] + element
+                if self.children[-1][-1:].isspace() or element[:1].isspace():
+                    combined = normalize_whitespace(combined)
+                self.children[-1] = combined
                 return
         elif self.children:
             # removing last children if it is only whitespace
