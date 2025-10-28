@@ -324,7 +324,20 @@ def do_get_current_language(parser, token):
     """
     # token.split_contents() isn't useful here because this tag doesn't accept
     # variable as arguments.
-    args = token.contents.split()
+    contents = token.contents
+    # Fast-path: avoid split and tuple allocation unless strictly necessary
+    # 'get_current_language as <var>'
+    if contents.startswith("get_current_language as "):
+        variable = contents[24:]
+        if not variable or " " in variable:
+            raise TemplateSyntaxError(
+                "'get_current_language' requires 'as variable' (got %r)"
+                % contents.split()
+            )
+        return GetCurrentLanguageNode(variable)
+
+    # fallback (rare/invalid patterns): minimal split, avoid creating whole list if possible
+    args = contents.split()
     if len(args) != 3 or args[1] != "as":
         raise TemplateSyntaxError(
             "'get_current_language' requires 'as variable' (got %r)" % args
