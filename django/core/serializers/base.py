@@ -52,6 +52,8 @@ class ProgressBar:
         self.output = output
         self.total_count = total_count
         self.prev_done = 0
+        # Cache progress_width for faster attribute access
+        self.progress_width = type(self).progress_width
 
     def update(self, count):
         if not self.output:
@@ -61,10 +63,15 @@ class ProgressBar:
         if self.prev_done >= done:
             return
         self.prev_done = done
+
+        # Avoid string concatenation by pre-constructing strings
+        bar = "." * done
+        space = " " * (self.progress_width - done)
+
         cr = "" if self.total_count == 1 else "\r"
-        self.output.write(
-            cr + "[" + "." * done + " " * (self.progress_width - done) + "]"
-        )
+        out_str = f"{cr}[{bar}{space}]"
+
+        self.output.write(out_str)
         if done == self.progress_width:
             self.output.write("\n")
         self.output.flush()
