@@ -115,48 +115,90 @@ pgettext_lazy = lazy(pgettext, str)
 def lazy_number(func, resultclass, number=None, **kwargs):
     if isinstance(number, int):
         kwargs["number"] = number
-        proxy = lazy(func, resultclass)(**kwargs)
+        # The following call is hot: avoid repeated closures/constructions on every invocation.
+        # Cache the lazy(func, resultclass) to not recreate the proxy class every time.
+        # Safe, as 'lazy' is pure given same func/resultclass.
+        if not hasattr(lazy_number, "_lazy_func_cache"):
+            lazy_number._lazy_func_cache = {}
+        cache = lazy_number._lazy_func_cache
+        key = (id(func), id(resultclass))
+        proxy_func = cache.get(key)
+        if proxy_func is None:
+            proxy_func = lazy(func, resultclass)
+            cache[key] = proxy_func
+        proxy = proxy_func(**kwargs)
     else:
+        # Only create NumberAwareString once for this func/resultclass/number signature
+        if not hasattr(lazy_number, "_numberaware_cache"):
+            lazy_number._numberaware_cache = {}
+        nkey = (id(resultclass), id(func), number)
+        NumberAwareString = lazy_number._numberaware_cache.get(nkey)
+        if NumberAwareString is None:
+            # Construct NumberAwareString, inheriting from resultclass
+            class NumberAwareString(resultclass):
+                def __bool__(self):
+                    return bool(self._kwargs["singular"])
+
+                def _get_number_value(self, values):
+                    try:
+                        return values[self._number]
+                    except KeyError:
+                        raise KeyError(
+                            "Your dictionary lacks key '%s'. Please provide "
+                            "it, because it is required to determine whether "
+                            "string is singular or plural." % self._number
+                        )
+
+                def _translate(self, number_value):
+                    params = self._kwargs.copy()
+                    params["number"] = number_value
+                    return self._func(**params)
+
+                def format(self, *args, **kwargs):
+                    if kwargs and self._number is not None:
+                        number_value = self._get_number_value(kwargs)
+                    else:
+                        number_value = args[0]
+                    return self._translate(number_value).format(*args, **kwargs)
+
+                def __mod__(self, rhs):
+                    if isinstance(rhs, dict) and self._number is not None:
+                        number_value = self._get_number_value(rhs)
+                    else:
+                        number_value = rhs
+                    translated = self._translate(number_value)
+                    try:
+                        translated %= rhs
+                    except TypeError:
+                        # String doesn't contain a placeholder for the number.
+                        pass
+                    return translated
+
+            NumberAwareString._func = staticmethod(func)
+            NumberAwareString._number = number
+            # We'll set ._kwargs per instance, since kwargs is potentially mutable.
+            lazy_number._numberaware_cache[nkey] = NumberAwareString
+
         original_kwargs = kwargs.copy()
 
-        class NumberAwareString(resultclass):
-            def __bool__(self):
-                return bool(kwargs["singular"])
+        # We need to capture the kwargs for each instance
+        def make_string(**make_kwargs):
+            obj = NumberAwareString()
+            obj._kwargs = make_kwargs
+            return obj
 
-            def _get_number_value(self, values):
-                try:
-                    return values[number]
-                except KeyError:
-                    raise KeyError(
-                        "Your dictionary lacks key '%s'. Please provide "
-                        "it, because it is required to determine whether "
-                        "string is singular or plural." % number
-                    )
+        # Similarly, cache the lazy wrapper per NumberAwareString class
+        if not hasattr(lazy_number, "_lazy_proxy_cache"):
+            lazy_number._lazy_proxy_cache = {}
+        lazy_proxy_key = id(NumberAwareString)
+        lazy_proxy_func = lazy_number._lazy_proxy_cache.get(lazy_proxy_key)
+        if lazy_proxy_func is None:
+            lazy_proxy_func = lazy(make_string, NumberAwareString)
+            lazy_number._lazy_proxy_cache[lazy_proxy_key] = lazy_proxy_func
 
-            def _translate(self, number_value):
-                kwargs["number"] = number_value
-                return func(**kwargs)
+        proxy = lazy_proxy_func(**kwargs)
 
-            def format(self, *args, **kwargs):
-                number_value = (
-                    self._get_number_value(kwargs) if kwargs and number else args[0]
-                )
-                return self._translate(number_value).format(*args, **kwargs)
-
-            def __mod__(self, rhs):
-                if isinstance(rhs, dict) and number:
-                    number_value = self._get_number_value(rhs)
-                else:
-                    number_value = rhs
-                translated = self._translate(number_value)
-                try:
-                    translated %= rhs
-                except TypeError:
-                    # String doesn't contain a placeholder for the number.
-                    pass
-                return translated
-
-        proxy = lazy(lambda **kwargs: NumberAwareString(), NumberAwareString)(**kwargs)
+        # Bind reduce to allow pickle round-trip and retain original_kwargs
         proxy.__reduce__ = lambda: (
             _lazy_number_unpickle,
             (func, resultclass, number, original_kwargs),
