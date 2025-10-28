@@ -5,6 +5,7 @@ Internationalization support.
 from contextlib import ContextDecorator
 from decimal import ROUND_UP, Decimal
 
+from django.conf.locale import LANG_INFO
 from django.utils.autoreload import autoreload_started, file_changed
 from django.utils.functional import lazy
 from django.utils.regex_helper import _lazy_re_compile
@@ -66,9 +67,7 @@ class Trans:
         if settings.USE_I18N:
             from django.utils.translation import trans_real as trans
             from django.utils.translation.reloader import (
-                translation_file_changed,
-                watch_for_translation_changes,
-            )
+                translation_file_changed, watch_for_translation_changes)
 
             autoreload_started.connect(
                 watch_for_translation_changes, dispatch_uid="translation_file_changed"
@@ -267,24 +266,27 @@ def deactivate_all():
 
 
 def get_language_info(lang_code):
-    from django.conf.locale import LANG_INFO
-
+    # Use module-level LANG_INFO import for better performance.
     try:
         lang_info = LANG_INFO[lang_code]
-        if "fallback" in lang_info and "name" not in lang_info:
-            info = get_language_info(lang_info["fallback"][0])
-        else:
-            info = lang_info
     except KeyError:
         if "-" not in lang_code:
             raise KeyError("Unknown language code %s." % lang_code)
-        generic_lang_code = lang_code.split("-")[0]
+        generic_lang_code = lang_code.split("-", 1)[0]
         try:
-            info = LANG_INFO[generic_lang_code]
+            lang_info = LANG_INFO[generic_lang_code]
         except KeyError:
             raise KeyError(
                 "Unknown language code %s and %s." % (lang_code, generic_lang_code)
             )
+    # If 'name' is present, use it; else fallback
+    if "fallback" in lang_info and "name" not in lang_info:
+        # Use fallback language code's name directly, avoid recursive call to get_language_info
+        fallback_code = lang_info["fallback"][0]
+        fallback_info = LANG_INFO[fallback_code]
+        info = fallback_info
+    else:
+        info = lang_info
 
     if info:
         info["name_translated"] = gettext_lazy(info["name"])
