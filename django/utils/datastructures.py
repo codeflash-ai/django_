@@ -120,13 +120,10 @@ class MultiValueDict(dict):
         Return the last data value for the passed key. If key doesn't exist
         or value is an empty list, return `default`.
         """
-        try:
-            val = self[key]
-        except KeyError:
+        val = dict.get(self, key, None)
+        if val is None or val == []:
             return default
-        if val == []:
-            return default
-        return val
+        return val[-1]
 
     def _getlist(self, key, default=None, force_list=False):
         """
