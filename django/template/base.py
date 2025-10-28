@@ -1176,7 +1176,11 @@ def token_kwargs(bits, parser, support_legacy=False):
     """
     if not bits:
         return {}
-    match = kwarg_re.match(bits[0])
+
+    kwarg_re_match = kwarg_re.match
+    compile_filter = parser.compile_filter
+
+    match = kwarg_re_match(bits[0])
     kwarg_format = match and match[1]
     if not kwarg_format:
         if not support_legacy:
@@ -1185,21 +1189,26 @@ def token_kwargs(bits, parser, support_legacy=False):
             return {}
 
     kwargs = {}
-    while bits:
+    bitlen = len(bits)
+    idx = 0
+
+    while idx < bitlen:
         if kwarg_format:
-            match = kwarg_re.match(bits[0])
+            match = kwarg_re_match(bits[idx])
             if not match or not match[1]:
-                return kwargs
+                break
             key, value = match.groups()
-            del bits[:1]
+            idx += 1
         else:
-            if len(bits) < 3 or bits[1] != "as":
-                return kwargs
-            key, value = bits[2], bits[0]
-            del bits[:3]
-        kwargs[key] = parser.compile_filter(value)
-        if bits and not kwarg_format:
-            if bits[0] != "and":
-                return kwargs
-            del bits[:1]
+            if idx + 2 >= bitlen or bits[idx + 1] != "as":
+                break
+            key, value = bits[idx + 2], bits[idx]
+            idx += 3
+        kwargs[key] = compile_filter(value)
+        if idx < bitlen and not kwarg_format:
+            if bits[idx] != "and":
+                break
+            idx += 1
+
+    del bits[:idx]
     return kwargs
