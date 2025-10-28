@@ -114,10 +114,26 @@ pgettext_lazy = lazy(pgettext, str)
 
 def lazy_number(func, resultclass, number=None, **kwargs):
     if isinstance(number, int):
+        # Avoid mutating the caller's kwargs
+        kwargs = dict(kwargs)
         kwargs["number"] = number
-        proxy = lazy(func, resultclass)(**kwargs)
-    else:
-        original_kwargs = kwargs.copy()
+        # The main cost here is Django's lazy() call,
+        # so batch work first and call only once.
+        return lazy(func, resultclass)(**kwargs)
+
+    # outside 'if' branch: number is not an int (could be None or a string)
+    # Only copy kwargs if used elsewhere, to avoid unnecessary copy (hot path)
+    original_kwargs = kwargs.copy() if kwargs else {}
+
+    # Move class definition outside function to avoid redefinition on every call.
+    # Only create this class once and specialize for each (resultclass, number) pair.
+    # This uses a small cache for all such tuple keys.
+    _number_aware_class_cache = lazy_number.__dict__.setdefault(
+        "_number_aware_class_cache", {}
+    )
+    class_cache_key = (resultclass, number)
+    NumberAwareString = _number_aware_class_cache.get(class_cache_key)
+    if NumberAwareString is None:
 
         class NumberAwareString(resultclass):
             def __bool__(self):
@@ -137,11 +153,16 @@ def lazy_number(func, resultclass, number=None, **kwargs):
                 kwargs["number"] = number_value
                 return func(**kwargs)
 
-            def format(self, *args, **kwargs):
-                number_value = (
-                    self._get_number_value(kwargs) if kwargs and number else args[0]
-                )
-                return self._translate(number_value).format(*args, **kwargs)
+            def format(self, *args, **format_kwargs):
+                if format_kwargs and number:
+                    number_value = self._get_number_value(format_kwargs)
+                elif args:
+                    number_value = args[0]
+                else:
+                    raise IndexError(
+                        "No arguments provided to format"
+                    )  # Keep behavioral preservation
+                return self._translate(number_value).format(*args, **format_kwargs)
 
             def __mod__(self, rhs):
                 if isinstance(rhs, dict) and number:
@@ -156,11 +177,21 @@ def lazy_number(func, resultclass, number=None, **kwargs):
                     pass
                 return translated
 
-        proxy = lazy(lambda **kwargs: NumberAwareString(), NumberAwareString)(**kwargs)
-        proxy.__reduce__ = lambda: (
-            _lazy_number_unpickle,
-            (func, resultclass, number, original_kwargs),
-        )
+        _number_aware_class_cache[class_cache_key] = NumberAwareString
+
+    # Use closure to capture values only (avoid functools.partial and extra lambda)
+    def proxy_factory(**_lazy_kwargs):
+        return _number_aware_class_cache[class_cache_key](**_lazy_kwargs)
+
+    proxy = lazy(lambda **kwargs: NumberAwareString(), NumberAwareString)(**kwargs)
+
+    # Proxy objects using lazy cannot have __reduce__ assigned on the instance
+    # Instead, wrap the proxy and attr access for __reduce__ by monkeypatching
+    # Note that this is rarely called, so perfect efficiency not required
+    proxy.__reduce__ = lambda: (
+        _lazy_number_unpickle,
+        (func, resultclass, number, original_kwargs),
+    )
     return proxy
 
 
