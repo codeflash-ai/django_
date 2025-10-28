@@ -171,12 +171,13 @@ def lazy(func, *resultclasses):
 
     # Add wrappers for all methods from resultclasses which haven't been
     # wrapped explicitly above.
+    proxy_attrs = set(dir(__proxy__))
     for resultclass in resultclasses:
         for type_ in resultclass.mro():
             for method_name in type_.__dict__:
                 # All __promise__ return the same wrapper method, they look up
                 # the correct implementation when called.
-                if hasattr(__proxy__, method_name):
+                if method_name in proxy_attrs:
                     continue
 
                 # Builds a wrapper around some method. Pass method_name to
