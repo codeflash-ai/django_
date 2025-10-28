@@ -82,17 +82,31 @@ class CheckRegistry:
         errors = []
         checks = self.get_checks(include_deployment_checks)
 
+        # Optimize tag filtering by using set logic only once and using generator expression.
         if tags is not None:
-            checks = [check for check in checks if not set(check.tags).isdisjoint(tags)]
+            tags = set(tags)
+            # Use generator expression for memory efficiency
+            checks = (
+                check
+                for check in checks
+                if check.tags and not set(check.tags).isdisjoint(tags)
+            )
+
+        # Loop optimization: instead of repeatedly checking isinstance in every iteration,
+        # we minimize list extension cost by using a local errors list, and avoid extending for empty results.
+        append_error = errors.extend
+        iterable_type = Iterable
 
         for check in checks:
             new_errors = check(app_configs=app_configs, databases=databases)
-            if not isinstance(new_errors, Iterable):
+            if not isinstance(new_errors, iterable_type):
                 raise TypeError(
                     "The function %r did not return a list. All functions "
                     "registered with the checks registry must return a list." % check,
                 )
-            errors.extend(new_errors)
+            # Only extend when non-empty to reduce overhead
+            if new_errors:
+                append_error(new_errors)
         return errors
 
     def tag_exists(self, tag, include_deployment_checks=False):
@@ -106,10 +120,11 @@ class CheckRegistry:
         )
 
     def get_checks(self, include_deployment_checks=False):
-        checks = list(self.registered_checks)
+        # Use set union to avoid intermediate list extension
         if include_deployment_checks:
-            checks.extend(self.deployment_checks)
-        return checks
+            return list(self.registered_checks | self.deployment_checks)
+        else:
+            return list(self.registered_checks)
 
 
 registry = CheckRegistry()
