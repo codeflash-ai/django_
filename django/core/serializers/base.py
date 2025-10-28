@@ -328,37 +328,50 @@ def build_instance(Model, data, db):
 
 def deserialize_m2m_values(field, field_value, using, handle_forward_references):
     model = field.remote_field.model
-    if hasattr(model._default_manager, "get_by_natural_key"):
+    model_default_manager = model._default_manager
+    model_meta_pk = model._meta.pk
+
+    if hasattr(model_default_manager, "get_by_natural_key"):
+        db_manager = model_default_manager.db_manager(using)
+        get_by_natural_key = db_manager.get_by_natural_key
+        to_python = model_meta_pk.to_python
 
         def m2m_convert(value):
-            if hasattr(value, "__iter__") and not isinstance(value, str):
-                return (
-                    model._default_manager.db_manager(using)
-                    .get_by_natural_key(*value)
-                    .pk
-                )
-            else:
-                return model._meta.pk.to_python(value)
+            # optimize for built-in sequence types here
+            if isinstance(value, str):
+                return to_python(value)
+            try:
+                # Fast paths for tuple and list (avoid hasattr(__iter__))
+                # avoid exception on situations like int
+                if isinstance(value, (tuple, list)):
+                    return get_by_natural_key(*value).pk
+                else:
+                    # fallback: generic iterable but not string, use get_by_natural_key
+                    return get_by_natural_key(*value).pk
+            except TypeError:
+                # non-iterable (e.g. int or other - treat as plain value)
+                return to_python(value)
 
     else:
+        to_python = model_meta_pk.to_python
 
         def m2m_convert(v):
-            return model._meta.pk.to_python(v)
+            return to_python(v)
 
     try:
         pks_iter = iter(field_value)
     except TypeError as e:
         raise M2MDeserializationError(e, field_value)
+    # Use list comprehension to optimize loop
     try:
-        values = []
-        for pk in pks_iter:
-            values.append(m2m_convert(pk))
-        return values
+        return [m2m_convert(pk) for pk in pks_iter]
     except Exception as e:
         if isinstance(e, ObjectDoesNotExist) and handle_forward_references:
             return DEFER_FIELD
         else:
-            raise M2MDeserializationError(e, pk)
+            # pk may not be bound if exception thrown on first iteration;
+            # in that case, field_value may be empty/invalid — let original behavior propagate
+            raise M2MDeserializationError(e, pk if "pk" in locals() else None)
 
 
 def deserialize_fk_value(field, field_value, using, handle_forward_references):
