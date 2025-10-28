@@ -489,10 +489,11 @@ class NotRelationField(Exception):
 
 
 def get_model_from_relation(field):
-    if hasattr(field, "path_infos"):
-        return field.path_infos[-1].to_opts.model
-    else:
+    try:
+        path_infos = field.path_infos
+    except AttributeError:
         raise NotRelationField
+    return path_infos[-1].to_opts.model
 
 
 def reverse_field_path(model, path):
@@ -537,12 +538,12 @@ def get_fields_from_path(model, path):
     """
     pieces = path.split(LOOKUP_SEP)
     fields = []
+    parent = model
     for piece in pieces:
-        if fields:
-            parent = get_model_from_relation(fields[-1])
-        else:
-            parent = model
-        fields.append(parent._meta.get_field(piece))
+        field = parent._meta.get_field(piece)
+        fields.append(field)
+        if piece != pieces[-1]:
+            parent = get_model_from_relation(field)
     return fields
 
 
