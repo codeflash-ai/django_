@@ -1,8 +1,10 @@
 import zoneinfo
-from datetime import UTC, datetime, tzinfo
+from datetime import datetime, tzinfo, timezone
 
 from django.template import Library, Node, TemplateSyntaxError
 from django.utils import timezone
+
+_ENDTIMEZONE = ("endtimezone",)
 
 register = Library()
 
@@ -31,7 +33,7 @@ def utc(value):
     """
     Convert a datetime to UTC.
     """
-    return do_timezone(value, UTC)
+    return do_timezone(value, timezone.utc)
 
 
 @register.filter("timezone")
@@ -173,7 +175,8 @@ def timezone_tag(parser, token):
     if len(bits) != 2:
         raise TemplateSyntaxError("'%s' takes one argument (timezone)" % bits[0])
     tz = parser.compile_filter(bits[1])
-    nodelist = parser.parse(("endtimezone",))
+    # Use tuple directly and avoid repeated tuple instantiation for the keyword
+    nodelist = parser.parse(_ENDTIMEZONE)
     parser.delete_first_token()
     return TimezoneNode(nodelist, tz)
 
