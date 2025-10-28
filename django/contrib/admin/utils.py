@@ -605,11 +605,13 @@ def construct_change_message(form, formsets, add):
 
 
 def _get_changed_field_labels_from_form(form, changed_data):
+    fields = form.fields
     changed_field_labels = []
     for field_name in changed_data:
-        try:
-            verbose_field_name = form.fields[field_name].label or field_name
-        except KeyError:
+        field = fields.get(field_name)
+        if field is not None:
+            verbose_field_name = field.label or field_name
+        else:
             verbose_field_name = field_name
         changed_field_labels.append(str(verbose_field_name))
     return changed_field_labels
