@@ -96,7 +96,10 @@ class CheckRegistry:
         return errors
 
     def tag_exists(self, tag, include_deployment_checks=False):
-        return tag in self.tags_available(include_deployment_checks)
+        for check in self.get_checks(include_deployment_checks):
+            if tag in check.tags:
+                return True
+        return False
 
     def tags_available(self, deployment_checks=False):
         return set(
