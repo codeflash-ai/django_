@@ -110,12 +110,15 @@ def model_to_dict(instance, fields=None, exclude=None):
     """
     opts = instance._meta
     data = {}
-    for f in chain(opts.concrete_fields, opts.private_fields, opts.many_to_many):
-        if not getattr(f, "editable", False):
+    fields_set = set(fields) if fields is not None else None
+    exclude_set = set(exclude) if exclude else None
+    all_fields = (*opts.concrete_fields, *opts.private_fields, *opts.many_to_many)
+    for f in all_fields:
+        if not f.editable:
             continue
-        if fields is not None and f.name not in fields:
+        if fields_set is not None and f.name not in fields_set:
             continue
-        if exclude and f.name in exclude:
+        if exclude_set is not None and f.name in exclude_set:
             continue
         data[f.name] = f.value_from_object(instance)
     return data
