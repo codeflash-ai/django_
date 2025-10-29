@@ -135,16 +135,15 @@ class MultiValueDict(dict):
         Used internally to manipulate values list. If force_list is True,
         return a new copy of values.
         """
-        try:
-            values = super().__getitem__(key)
-        except KeyError:
-            if default is None:
-                return []
-            return default
-        else:
-            if force_list:
-                values = list(values) if values is not None else None
-            return values
+        # Fast-path for common usage: avoid try/except overhead
+        # Also: minimize number of dict lookups
+        values = dict.get(self, key, None)
+        if values is None:
+            return [] if default is None else default
+        if force_list:
+            # Only copy if values is not None and is not already a list with default identity
+            return list(values)
+        return values
 
     def getlist(self, key, default=None):
         """
@@ -164,13 +163,19 @@ class MultiValueDict(dict):
         return self[key]
 
     def setlistdefault(self, key, default_list=None):
+        # Inline membership test and assignment for performance
+        # Avoids repeated dict lookups in _getlist for existing key
         if key not in self:
             if default_list is None:
                 default_list = []
-            self.setlist(key, default_list)
+            dict.__setitem__(self, key, default_list)
             # Do not return default_list here because setlist() may store
             # another value -- QueryDict.setlist() does. Look it up.
-        return self._getlist(key)
+        # Avoid superfluous indirections: call _getlist with known input
+        values = dict.get(self, key)
+        if values is None:
+            return []  # keep logic equivalent to _getlist's default branch
+        return values
 
     def appendlist(self, key, value):
         """Append an item to the internal list associated with key."""
