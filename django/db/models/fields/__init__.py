@@ -231,7 +231,6 @@ class Field(RegisterLookupMixin):
         self._db_tablespace = db_tablespace
         self.auto_created = auto_created
 
-        # Adjust the appropriate creation counter, and save our local copy.
         if auto_created:
             self.creation_counter = Field.auto_creation_counter
             Field.auto_creation_counter -= 1
@@ -240,7 +239,6 @@ class Field(RegisterLookupMixin):
             Field.creation_counter += 1
 
         self._validators = list(validators)  # Store for deconstruction later
-
         self._error_messages = error_messages  # Store for deconstruction later
 
     def __str__(self):
@@ -599,40 +597,33 @@ class Field(RegisterLookupMixin):
         """
         # Short-form way of fetching all the default parameters
         keywords = {}
-        possibles = {
-            "verbose_name": None,
-            "primary_key": False,
-            "max_length": None,
-            "unique": False,
-            "blank": False,
-            "null": False,
-            "db_index": False,
-            "default": NOT_PROVIDED,
-            "db_default": NOT_PROVIDED,
-            "editable": True,
-            "serialize": True,
-            "unique_for_date": None,
-            "unique_for_month": None,
-            "unique_for_year": None,
-            "choices": None,
-            "help_text": "",
-            "db_column": None,
-            "db_comment": None,
-            "db_tablespace": None,
-            "auto_created": False,
-            "validators": [],
-            "error_messages": None,
-        }
-        attr_overrides = {
-            "unique": "_unique",
-            "error_messages": "_error_messages",
-            "validators": "_validators",
-            "verbose_name": "_verbose_name",
-            "db_tablespace": "_db_tablespace",
-        }
+        possibles = (
+            ("verbose_name", None, "_verbose_name"),
+            ("primary_key", False, None),
+            ("max_length", None, None),
+            ("unique", False, "_unique"),
+            ("blank", False, None),
+            ("null", False, None),
+            ("db_index", False, None),
+            ("default", NOT_PROVIDED, None),
+            ("db_default", NOT_PROVIDED, None),
+            ("editable", True, None),
+            ("serialize", True, None),
+            ("unique_for_date", None, None),
+            ("unique_for_month", None, None),
+            ("unique_for_year", None, None),
+            ("choices", None, None),
+            ("help_text", "", None),
+            ("db_column", None, None),
+            ("db_comment", None, None),
+            ("db_tablespace", None, "_db_tablespace"),
+            ("auto_created", False, None),
+            ("validators", [], "_validators"),
+            ("error_messages", None, "_error_messages"),
+        )
         equals_comparison = {"choices", "validators"}
-        for name, default in possibles.items():
-            value = getattr(self, attr_overrides.get(name, name))
+        for name, default, attr_override in possibles:
+            value = getattr(self, attr_override or name)
             if isinstance(value, CallableChoiceIterator):
                 value = value.func
             # Do correct kind of comparison
@@ -658,7 +649,7 @@ class Field(RegisterLookupMixin):
             path = path.replace("django.db.models.fields.composite", "django.db.models")
         elif path.startswith("django.db.models.fields"):
             path = path.replace("django.db.models.fields", "django.db.models")
-        # Return basic info - other fields should override this.
+
         return (self.name, path, [], keywords)
 
     def clone(self):
