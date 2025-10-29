@@ -287,7 +287,7 @@ class Widget(metaclass=MediaDefiningClass):
     use_fieldset = False
 
     def __init__(self, attrs=None):
-        self.attrs = {} if attrs is None else attrs.copy()
+        self.attrs = {} if attrs is None else dict(attrs)
 
     def __deepcopy__(self, memo):
         obj = copy.copy(self)
@@ -555,8 +555,13 @@ class ClearableFileInput(FileInput):
         """
         Return the file object if it has a defined url attribute.
         """
-        if self.is_initial(value):
-            return value
+        # Inline the is_initial logic to avoid method call overhead
+        if value:
+            try:
+                if value.url:
+                    return value
+            except AttributeError:
+                pass
 
     def get_context(self, name, value, attrs):
         context = super().get_context(name, value, attrs)

@@ -248,12 +248,12 @@ class FileField(Field):
     ):
         self._primary_key_set_explicitly = "primary_key" in kwargs
 
-        self.storage = storage if storage is not None else default_storage
-        if callable(self.storage):
+        resolved_storage = storage if storage is not None else default_storage
+        if callable(resolved_storage):
             # Hold a reference to the callable for deconstruct().
-            self._storage_callable = self.storage
-            self.storage = self.storage()
-            if not isinstance(self.storage, Storage):
+            self._storage_callable = resolved_storage
+            resolved_storage = resolved_storage()
+            if not isinstance(resolved_storage, Storage):
                 raise TypeError(
                     "%s.storage must be a subclass/instance of %s.%s"
                     % (
@@ -262,6 +262,7 @@ class FileField(Field):
                         Storage.__qualname__,
                     )
                 )
+        self.storage = resolved_storage
         self.upload_to = upload_to
 
         kwargs.setdefault("max_length", 100)
