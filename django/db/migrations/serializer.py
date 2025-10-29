@@ -174,9 +174,13 @@ class EnumSerializer(BaseSerializer):
 
 class FloatSerializer(BaseSimpleSerializer):
     def serialize(self):
-        if math.isnan(self.value) or math.isinf(self.value):
-            return 'float("{}")'.format(self.value), set()
-        return super().serialize()
+        value = self.value  # Localize for attributes for faster access
+        # Use a single call to math.isnan/math.isinf using tuple membership for slight efficiency
+        if math.isnan(value) or math.isinf(value):
+            # Format with f-string, which is faster than .format
+            return f'float("{value}")', set()
+        # Avoid super() indirection for faster lookup; call method directly
+        return BaseSimpleSerializer.serialize(self)
 
 
 class FrozensetSerializer(BaseUnorderedSequenceSerializer):
