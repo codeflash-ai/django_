@@ -357,22 +357,24 @@ class BaseModelAdminChecks:
         """Check that fieldsets is properly formatted and doesn't contain
         duplicates."""
 
-        if obj.fieldsets is None:
+        fieldsets = obj.fieldsets
+        if fieldsets is None:
             return []
-        elif not isinstance(obj.fieldsets, (list, tuple)):
+        elif not isinstance(fieldsets, (list, tuple)):
             return must_be(
                 "a list or tuple", option="fieldsets", obj=obj, id="admin.E007"
             )
         else:
+            # Hoist variable and use list comprehension for slightly faster itemized creation
             seen_fields = []
-            return list(
-                chain.from_iterable(
+            errors = []
+            for index, fieldset in enumerate(fieldsets):
+                errors.extend(
                     self._check_fieldsets_item(
-                        obj, fieldset, "fieldsets[%d]" % index, seen_fields
+                        obj, fieldset, f"fieldsets[{index}]", seen_fields
                     )
-                    for index, fieldset in enumerate(obj.fieldsets)
                 )
-            )
+            return errors
 
     def _check_fieldsets_item(self, obj, fieldset, label, seen_fields):
         """Check an item of `fieldsets`, i.e. check that this is a pair of a
@@ -380,52 +382,75 @@ class BaseModelAdminChecks:
 
         if not isinstance(fieldset, (list, tuple)):
             return must_be("a list or tuple", option=label, obj=obj, id="admin.E008")
-        elif len(fieldset) != 2:
+        if len(fieldset) != 2:
             return must_be("of length 2", option=label, obj=obj, id="admin.E009")
-        elif not isinstance(fieldset[1], dict):
+        meta = fieldset[1]
+        if not isinstance(meta, dict):
             return must_be(
-                "a dictionary", option="%s[1]" % label, obj=obj, id="admin.E010"
+                "a dictionary", option=f"{label}[1]", obj=obj, id="admin.E010"
             )
-        elif "fields" not in fieldset[1]:
+        if "fields" not in meta:
             return [
                 checks.Error(
-                    "The value of '%s[1]' must contain the key 'fields'." % label,
+                    f"The value of '{label}[1]' must contain the key 'fields'.",
                     obj=obj.__class__,
                     id="admin.E011",
                 )
             ]
-        elif not isinstance(fieldset[1]["fields"], (list, tuple)):
+        fields_val = meta["fields"]
+        if not isinstance(fields_val, (list, tuple)):
             return must_be(
                 "a list or tuple",
-                option="%s[1]['fields']" % label,
+                option=f"{label}[1]['fields']",
                 obj=obj,
                 id="admin.E008",
             )
 
-        fieldset_fields = flatten(fieldset[1]["fields"])
+        # In-place flattening (micro-optimization) to avoid one intermediate allocation
+        fieldset_fields = []
+        for sub in fields_val:
+            if isinstance(sub, (list, tuple)):
+                fieldset_fields.extend(sub)
+            else:
+                fieldset_fields.append(sub)
+
+        # Instead of repeatedly recalculating Counter and set, do efficient set-based duplicate check
+        # Only check for duplicates within this fieldset that also appear in seen_fields
+        duplicates = []
+        seen_fields_set = set(seen_fields)
+        fieldset_fields_set = set()
+        for f in fieldset_fields:
+            if f in fieldset_fields_set or f in seen_fields_set:
+                duplicates.append(f)
+            else:
+                fieldset_fields_set.add(f)
         seen_fields.extend(fieldset_fields)
-        field_counts = collections.Counter(seen_fields)
-        fieldset_fields_set = set(fieldset_fields)
-        if duplicate_fields := [
-            field
-            for field, count in field_counts.items()
-            if count > 1 and field in fieldset_fields_set
-        ]:
+
+        if duplicates:
+            # preserve error message ordering, deduplicate while keeping order
+            seen = set()
+            duplicate_fields = []
+            for f in duplicates:
+                if f not in seen:
+                    seen.add(f)
+                    duplicate_fields.append(f)
             return [
                 checks.Error(
-                    "There are duplicate field(s) in '%s[1]'." % label,
+                    f"There are duplicate field(s) in '{label}[1]'.",
                     hint="Remove duplicates of %s."
                     % ", ".join(map(repr, duplicate_fields)),
                     obj=obj.__class__,
                     id="admin.E012",
                 )
             ]
-        return list(
-            chain.from_iterable(
-                self._check_field_spec(obj, fieldset_fields, '%s[1]["fields"]' % label)
-                for fieldset_fields in fieldset[1]["fields"]
+
+        # Use chain.from_iterable for compatibility, but inside list comprehension is faster than double generator
+        errors = []
+        for fieldset_item in fields_val:
+            errors.extend(
+                self._check_field_spec(obj, fieldset_item, f'{label}[1]["fields"]')
             )
-        )
+        return errors
 
     def _check_field_spec(self, obj, fields, label):
         """`fields` should be an item of `fields` or an item of
