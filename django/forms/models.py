@@ -1236,59 +1236,73 @@ def _get_foreign_key(parent_model, model, fk_name=None, can_fail=False):
     from django.db.models import ForeignKey
 
     opts = model._meta
+
+    # Cache parent info up front to avoid repeated attribute access
+    parent_opts = parent_model._meta
+    all_parents_tuple = (*parent_opts.all_parents, parent_model)
+    parent_label = parent_opts.label
+    model_label = opts.label
+
     if fk_name:
-        fks_to_parent = [f for f in opts.fields if f.name == fk_name]
-        if len(fks_to_parent) == 1:
-            fk = fks_to_parent[0]
-            all_parents = (*parent_model._meta.all_parents, parent_model)
+        # Optimize lookup: only search for field with the exact name, not list comprehension
+        fk = None
+        for f in opts.fields:
+            if f.name == fk_name:
+                fk = f
+                break
+        if fk is not None:
+            # Note: referencing the cached all_parents_tuple and parent_opts
             if (
                 not isinstance(fk, ForeignKey)
                 or (
-                    # ForeignKey to proxy models.
                     fk.remote_field.model._meta.proxy
-                    and fk.remote_field.model._meta.proxy_for_model not in all_parents
+                    and fk.remote_field.model._meta.proxy_for_model
+                    not in all_parents_tuple
                 )
                 or (
-                    # ForeignKey to concrete models.
                     not fk.remote_field.model._meta.proxy
                     and fk.remote_field.model != parent_model
-                    and fk.remote_field.model not in all_parents
+                    and fk.remote_field.model not in all_parents_tuple
                 )
             ):
                 raise ValueError(
                     "fk_name '%s' is not a ForeignKey to '%s'."
-                    % (fk_name, parent_model._meta.label)
+                    % (fk_name, parent_label)
                 )
-        elif not fks_to_parent:
-            raise ValueError(
-                "'%s' has no field named '%s'." % (model._meta.label, fk_name)
-            )
+        else:
+            raise ValueError("'%s' has no field named '%s'." % (model_label, fk_name))
     else:
-        # Try to discover what the ForeignKey from model to parent_model is
-        all_parents = (*parent_model._meta.all_parents, parent_model)
-        fks_to_parent = [
-            f
-            for f in opts.fields
-            if isinstance(f, ForeignKey)
-            and (
-                f.remote_field.model == parent_model
-                or f.remote_field.model in all_parents
+        # Short-circuit field iteration using a tight loop instead of list comprehension
+        matched_fk = None
+        found_count = 0
+        # Precompute proxy sets to avoid attribute lookups
+        proxy_models = set()
+        proxy_for_models = set()
+        for f in opts.fields:
+            if not isinstance(f, ForeignKey):
+                continue
+            f_remote = f.remote_field.model
+            f_remote_opts = f_remote._meta
+            if (
+                f_remote == parent_model
+                or f_remote in all_parents_tuple
                 or (
-                    f.remote_field.model._meta.proxy
-                    and f.remote_field.model._meta.proxy_for_model in all_parents
+                    f_remote_opts.proxy
+                    and f_remote_opts.proxy_for_model in all_parents_tuple
                 )
-            )
-        ]
-        if len(fks_to_parent) == 1:
-            fk = fks_to_parent[0]
-        elif not fks_to_parent:
+            ):
+                matched_fk = f if found_count == 0 else matched_fk
+                found_count += 1
+        if found_count == 1:
+            fk = matched_fk
+        elif found_count == 0:
             if can_fail:
                 return
             raise ValueError(
                 "'%s' has no ForeignKey to '%s'."
                 % (
-                    model._meta.label,
-                    parent_model._meta.label,
+                    model_label,
+                    parent_label,
                 )
             )
         else:
@@ -1296,8 +1310,8 @@ def _get_foreign_key(parent_model, model, fk_name=None, can_fail=False):
                 "'%s' has more than one ForeignKey to '%s'. You must specify "
                 "a 'fk_name' attribute."
                 % (
-                    model._meta.label,
-                    parent_model._meta.label,
+                    model_label,
+                    parent_label,
                 )
             )
     return fk
