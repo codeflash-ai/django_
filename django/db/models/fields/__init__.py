@@ -316,7 +316,11 @@ class Field(RegisterLookupMixin):
         if not self.choices:
             return []
 
-        if not isinstance(self.choices, Iterable) or isinstance(self.choices, str):
+        choices = self.choices
+        max_length = self.max_length
+
+        if not isinstance(choices, Iterable) or isinstance(choices, str):
+            # Not a valid structure, early exit
             return [
                 checks.Error(
                     "'choices' must be a mapping (e.g. a dictionary) or an iterable "
@@ -326,46 +330,66 @@ class Field(RegisterLookupMixin):
                 )
             ]
 
+        # Only call max() once per string batch, using direct update instead of unpacking large star expressions
         choice_max_length = 0
-        # Expect [group_name, [value, display]]
-        for choices_group in self.choices:
+        result = None  # Place to store a possible error for E005/E009
+
+        for choices_group in choices:
             try:
                 group_name, group_choices = choices_group
             except (TypeError, ValueError):
                 # Containing non-pairs
                 break
             try:
-                if not all(
-                    self._choices_is_value(value) and self._choices_is_value(human_name)
-                    for value, human_name in group_choices
-                ):
-                    break
-                if self.max_length is not None and group_choices:
-                    choice_max_length = max(
-                        [
-                            choice_max_length,
-                            *(
-                                len(value)
-                                for value, _ in group_choices
-                                if isinstance(value, str)
-                            ),
-                        ]
-                    )
+                group_choices_list = group_choices
+                is_iter = isinstance(group_choices_list, Iterable) and not isinstance(
+                    group_choices_list, str
+                )
+                if is_iter:
+                    valid_tuples = True
+                    max_str_len = choice_max_length
+                    for value, human_name in group_choices_list:
+                        if not (
+                            self._choices_is_value(value)
+                            and self._choices_is_value(human_name)
+                        ):
+                            valid_tuples = False
+                            break
+                        if max_length is not None and isinstance(value, str):
+                            val_len = len(value)
+                            if val_len > max_str_len:
+                                max_str_len = val_len
+                    if valid_tuples:
+                        if max_length is not None:
+                            choice_max_length = max_str_len
+                        continue
+                    else:
+                        break
+                else:
+                    # No groups, choices in the form [value, display]
+                    value, human_name = group_name, group_choices
+                    if not self._choices_is_value(value) or not self._choices_is_value(
+                        human_name
+                    ):
+                        break
+                    if max_length is not None and isinstance(value, str):
+                        choice_max_length = max(choice_max_length, len(value))
             except (TypeError, ValueError):
-                # No groups, choices in the form [value, display]
+                # No groups, choices in the form [value, display] or error
                 value, human_name = group_name, group_choices
                 if not self._choices_is_value(value) or not self._choices_is_value(
                     human_name
                 ):
                     break
-                if self.max_length is not None and isinstance(value, str):
+                if max_length is not None and isinstance(value, str):
                     choice_max_length = max(choice_max_length, len(value))
 
             # Special case: choices=['ab']
             if isinstance(choices_group, str):
                 break
         else:
-            if self.max_length is not None and choice_max_length > self.max_length:
+            # Only run this once for the valid case
+            if max_length is not None and choice_max_length > max_length:
                 return [
                     checks.Error(
                         "'max_length' is too small to fit the longest value "
