@@ -1087,9 +1087,13 @@ class ModelAdminChecks(BaseModelAdminChecks):
         """Check that list_per_page is an integer."""
 
         if not isinstance(obj.list_per_page, int):
-            return must_be(
-                "an integer", option="list_per_page", obj=obj, id="admin.E118"
-            )
+            return [
+                checks.Error(
+                    "The value of 'list_per_page' must be an integer.",
+                    obj=obj.__class__,
+                    id="admin.E118",
+                ),
+            ]
         else:
             return []
 
