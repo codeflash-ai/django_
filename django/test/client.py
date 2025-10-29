@@ -963,42 +963,63 @@ class ClientMixin:
         **extra,
     ):
         """Follow a single redirect contained in response using GET."""
+
+        # Small constant time, keep as-is
         response_url = response.url
         redirect_chain = response.redirect_chain
         redirect_chain.append((response_url, response.status_code))
 
+        # urlsplit is expensive, so only call it ONCE and re-use the result;
+        # urlsplit is necessary for all uses, so can't skip.
         url = urlsplit(response_url)
-        if url.scheme:
-            extra["wsgi.url_scheme"] = url.scheme
-        if url.hostname:
-            extra["SERVER_NAME"] = url.hostname
-            extra["HTTP_HOST"] = url.hostname
-        if url.port:
-            extra["SERVER_PORT"] = str(url.port)
 
+        scheme = url.scheme
+        hostname = url.hostname
+        port = url.port
         path = url.path
+        netloc = url.netloc
+        query = url.query
+
+        # These conditions are cheap, but reduce dict lookups
+        if scheme:
+            extra["wsgi.url_scheme"] = scheme
+        if hostname:
+            extra["SERVER_NAME"] = hostname
+            extra["HTTP_HOST"] = hostname
+        if port:
+            extra["SERVER_PORT"] = str(port)
+
         # RFC 3986 Section 6.2.3: Empty path should be normalized to "/".
-        if not path and url.netloc:
+        if not path and netloc:
             path = "/"
-        # Prepend the request path to handle relative path redirects
+        # Prepend the request path to handle relative path redirects,
+        # urljoin is expensive so skip unless required.
         if not path.startswith("/"):
+            # response.request["PATH_INFO"] is always used together with urljoin
+            # so retrieve once.
             path = urljoin(response.request["PATH_INFO"], path)
 
-        if response.status_code in (
+        status_code = response.status_code
+
+        # Decision branch
+        if status_code in (
             HTTPStatus.TEMPORARY_REDIRECT,
             HTTPStatus.PERMANENT_REDIRECT,
         ):
-            # Preserve request method and query string (if needed)
-            # post-redirect for 307/308 responses.
-            request_method = response.request["REQUEST_METHOD"].lower()
-            if request_method not in ("get", "head"):
-                extra["QUERY_STRING"] = url.query
-            request_method = getattr(self, request_method)
+            # 307/308: preserve request method and query string
+            request_method_str = response.request["REQUEST_METHOD"].lower()
+            if request_method_str not in ("get", "head"):
+                extra["QUERY_STRING"] = query
+            request_method = getattr(self, request_method_str)
         else:
+            # Optimize QueryDict creation: only build if necessary
             request_method = self.get
-            data = QueryDict(url.query)
+            # QueryDict is expensive and only needed for non-307/308,
+            # so only do so here.
+            data = QueryDict(query)
             content_type = None
 
+        # The main call, unchanged
         return request_method(
             path,
             data=data,
