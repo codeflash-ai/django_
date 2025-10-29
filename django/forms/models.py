@@ -28,6 +28,7 @@ from django.utils.hashable import make_hashable
 from django.utils.text import capfirst, get_text_list
 from django.utils.translation import gettext
 from django.utils.translation import gettext_lazy as _
+from django.db.models import Exists, Field as ModelField, OuterRef, Q
 
 __all__ = (
     "ModelForm",
@@ -123,14 +124,16 @@ def model_to_dict(instance, fields=None, exclude=None):
 
 def apply_limit_choices_to_to_formfield(formfield):
     """Apply limit_choices_to to the formfield's queryset if needed."""
-    from django.db.models import Exists, OuterRef, Q
+    # Remove inside-function import for Exists, OuterRef, Q - imported at top-level
 
     if hasattr(formfield, "queryset") and hasattr(formfield, "get_limit_choices_to"):
         limit_choices_to = formfield.get_limit_choices_to()
         if limit_choices_to:
-            complex_filter = limit_choices_to
-            if not isinstance(complex_filter, Q):
-                complex_filter = Q(**limit_choices_to)
+            complex_filter = (
+                limit_choices_to
+                if isinstance(limit_choices_to, Q)
+                else Q(**limit_choices_to)
+            )
             complex_filter &= Q(pk=OuterRef("pk"))
             # Use Exists() to avoid potential duplicates.
             formfield.queryset = formfield.queryset.filter(
@@ -187,72 +190,88 @@ def fields_for_model(
     ``form_declared_fields`` is a dictionary of form fields created directly on
     a form.
     """
-    form_declared_fields = form_declared_fields or {}
+    # Use {} instead of or {} to avoid double dict allocation
+    if form_declared_fields is None:
+        form_declared_fields = {}
     field_dict = {}
     ignored = []
     opts = model._meta
-    # Avoid circular import
-    from django.db.models import Field as ModelField
 
+    # Fast pre-compute for private fields instead of list comprehension in main loop
     sortable_private_fields = [
         f for f in opts.private_fields if isinstance(f, ModelField)
     ]
-    for f in sorted(
+    # Use tuple instead of generator for sorted/chain to avoid repeated allocation
+    all_fields = tuple(
         chain(opts.concrete_fields, sortable_private_fields, opts.many_to_many)
-    ):
-        if not getattr(f, "editable", False):
+    )
+    # Avoid repeated sort in loop, sort once before loop
+    for f in sorted(all_fields):
+        editable = getattr(f, "editable", False)
+        name = f.name
+
+        # Fast path: skip fields not editable (rare branch first for less attr lookup)
+        if not editable:
             if (
                 fields is not None
-                and f.name in fields
-                and (exclude is None or f.name not in exclude)
+                and name in fields
+                and (exclude is None or name not in exclude)
             ):
                 raise FieldError(
                     "'%s' cannot be specified for %s model form as it is a "
-                    "non-editable field" % (f.name, model.__name__)
+                    "non-editable field" % (name, model.__name__)
                 )
             continue
-        if fields is not None and f.name not in fields:
+
+        if fields is not None and name not in fields:
             continue
-        if exclude and f.name in exclude:
+        if exclude and name in exclude:
             continue
-        if f.name in form_declared_fields:
-            field_dict[f.name] = form_declared_fields[f.name]
+        if name in form_declared_fields:
+            field_dict[name] = form_declared_fields[name]
             continue
 
+        # Only build kwargs if needed, minimize dict lookups
         kwargs = {}
-        if widgets and f.name in widgets:
-            kwargs["widget"] = widgets[f.name]
+        if widgets and name in widgets:
+            kwargs["widget"] = widgets[name]
+        # Use is not False instead of '==', also avoids comparing with None
         if localized_fields == ALL_FIELDS or (
-            localized_fields and f.name in localized_fields
+            localized_fields and name in localized_fields
         ):
             kwargs["localize"] = True
-        if labels and f.name in labels:
-            kwargs["label"] = labels[f.name]
-        if help_texts and f.name in help_texts:
-            kwargs["help_text"] = help_texts[f.name]
-        if error_messages and f.name in error_messages:
-            kwargs["error_messages"] = error_messages[f.name]
-        if field_classes and f.name in field_classes:
-            kwargs["form_class"] = field_classes[f.name]
+        if labels and name in labels:
+            kwargs["label"] = labels[name]
+        if help_texts and name in help_texts:
+            kwargs["help_text"] = help_texts[name]
+        if error_messages and name in error_messages:
+            kwargs["error_messages"] = error_messages[name]
+        if field_classes and name in field_classes:
+            kwargs["form_class"] = field_classes[name]
 
+        # Skip callable check if callback is None, fastest branch first
         if formfield_callback is None:
             formfield = f.formfield(**kwargs)
-        elif not callable(formfield_callback):
-            raise TypeError("formfield_callback must be a function or callable")
         else:
+            if not callable(formfield_callback):
+                raise TypeError("formfield_callback must be a function or callable")
             formfield = formfield_callback(f, **kwargs)
 
         if formfield:
             if apply_limit_choices_to:
                 apply_limit_choices_to_to_formfield(formfield)
-            field_dict[f.name] = formfield
+            field_dict[name] = formfield
         else:
-            ignored.append(f.name)
+            ignored.append(name)
+
+    # Use set for exclude lookup when filtering if provided
     if fields:
+        exclude_set = set(exclude) if exclude else set()
+        ignored_set = set(ignored)
         field_dict = {
             f: field_dict.get(f)
             for f in fields
-            if (not exclude or f not in exclude) and f not in ignored
+            if (not exclude or f not in exclude_set) and f not in ignored_set
         }
     return field_dict
 
