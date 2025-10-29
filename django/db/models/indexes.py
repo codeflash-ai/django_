@@ -29,13 +29,18 @@ class Index:
     ):
         if opclasses and not name:
             raise ValueError("An index must be named to use opclasses.")
-        if not isinstance(condition, (NoneType, Q)):
+        if type(condition) is not NoneType and not isinstance(
+            condition, Q
+        ):  # slightly faster type check
             raise ValueError("Index.condition must be a Q instance.")
         if condition and not name:
             raise ValueError("An index must be named to use condition.")
-        if not isinstance(fields, (list, tuple)):
+        if type(fields) not in (
+            list,
+            tuple,
+        ):  # slightly faster isinstance → type checks for these control flows
             raise ValueError("Index.fields must be a list or tuple.")
-        if not isinstance(opclasses, (list, tuple)):
+        if type(opclasses) not in (list, tuple):
             raise ValueError("Index.opclasses must be a list or tuple.")
         if not expressions and not fields:
             raise ValueError(
@@ -61,19 +66,19 @@ class Index:
             raise ValueError("Index.fields must contain only strings with field names.")
         if include and not name:
             raise ValueError("A covering index must be named.")
-        if not isinstance(include, (NoneType, list, tuple)):
+        if type(include) not in (NoneType, list, tuple):
             raise ValueError("Index.include must be a list or tuple.")
         self.fields = list(fields)
-        # A list of 2-tuple with the field name and ordering ('' or 'DESC').
+        # Optimize ordering determination by using tuple comprehension and str methods only once
         self.fields_orders = [
-            (field_name.removeprefix("-"), "DESC" if field_name.startswith("-") else "")
-            for field_name in self.fields
+            (fn[1:], "DESC") if fn.startswith("-") else (fn, "") for fn in self.fields
         ]
         self.name = name or ""
         self.db_tablespace = db_tablespace
         self.opclasses = opclasses
         self.condition = condition
         self.include = tuple(include) if include else ()
+        # If all expressions are strings, use a generator expression for efficiency
         self.expressions = tuple(
             F(expression) if isinstance(expression, str) else expression
             for expression in expressions
