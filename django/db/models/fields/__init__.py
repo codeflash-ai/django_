@@ -215,7 +215,7 @@ class Field(RegisterLookupMixin):
         self.max_length, self._unique = max_length, unique
         self.blank, self.null = blank, null
         self.remote_field = rel
-        self.is_relation = self.remote_field is not None
+        self.is_relation = rel is not None  # Use rel directly for is_relation test
         self.default = default
         self.db_default = db_default
         self.editable = editable
@@ -231,16 +231,20 @@ class Field(RegisterLookupMixin):
         self._db_tablespace = db_tablespace
         self.auto_created = auto_created
 
-        # Adjust the appropriate creation counter, and save our local copy.
+        # Optimize creation_counter logic (less attribute lookup)
         if auto_created:
-            self.creation_counter = Field.auto_creation_counter
+            counter = Field.auto_creation_counter
             Field.auto_creation_counter -= 1
         else:
-            self.creation_counter = Field.creation_counter
+            counter = Field.creation_counter
             Field.creation_counter += 1
+        self.creation_counter = counter
 
-        self._validators = list(validators)  # Store for deconstruction later
-
+        # Avoid an unnecessary copy if no validators
+        if validators:
+            self._validators = list(validators)
+        else:
+            self._validators = []
         self._error_messages = error_messages  # Store for deconstruction later
 
     def __str__(self):
@@ -915,8 +919,10 @@ class Field(RegisterLookupMixin):
         return connection.data_types_suffix.get(self.get_internal_type())
 
     def get_db_converters(self, connection):
-        if hasattr(self, "from_db_value"):
-            return [self.from_db_value]
+        # Use local variable for method lookup to avoid repeated attribute access
+        from_db_value = getattr(self, "from_db_value", None)
+        if from_db_value is not None:
+            return [from_db_value]
         return []
 
     @cached_property
@@ -1891,10 +1897,17 @@ class DurationField(Field):
         return connection.ops.adapt_durationfield_value(value)
 
     def get_db_converters(self, connection):
-        converters = []
-        if not connection.features.has_native_duration_field:
-            converters.append(connection.ops.convert_durationfield_value)
-        return converters + super().get_db_converters(connection)
+        # Local variable reference for connection.ops
+        ops = connection.ops
+        features = connection.features
+        # Fast path: no native duration field
+        if not features.has_native_duration_field:
+            converters = [ops.convert_durationfield_value]
+            from_db_value = getattr(self, "from_db_value", None)
+            if from_db_value is not None:
+                converters.append(from_db_value)
+            return converters
+        return super().get_db_converters(connection)
 
     def value_to_string(self, obj):
         val = self.value_from_object(obj)
