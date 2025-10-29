@@ -58,34 +58,49 @@ def construct_instance(form, instance, fields=None, exclude=None):
 
     cleaned_data = form.cleaned_data
     file_field_list = []
-    for f in opts.fields:
+
+    # Convert to set for O(1) lookup if provided (major speedup).
+    fields_set = set(fields) if fields is not None else None
+    exclude_set = set(exclude) if exclude else None
+    form_data = form.data
+    form_files = form.files
+    add_prefix = form.add_prefix
+
+    fields_iter = opts.fields
+    auto_field_type = models.AutoField
+    file_field_type = models.FileField
+
+    for f in fields_iter:
+        fname = f.name
+        # Fast path exclusion checks
         if (
             not f.editable
-            or isinstance(f, models.AutoField)
-            or f.name not in cleaned_data
+            or isinstance(f, auto_field_type)
+            or fname not in cleaned_data
         ):
             continue
-        if fields is not None and f.name not in fields:
+        if fields_set is not None and fname not in fields_set:
             continue
-        if exclude and f.name in exclude:
+        if exclude_set and fname in exclude_set:
             continue
+
         # Leave defaults for fields that aren't in POST data, except for
         # checkbox inputs because they don't appear in POST data if not
         # checked.
         if (
             f.has_default()
-            and form[f.name].field.widget.value_omitted_from_data(
-                form.data, form.files, form.add_prefix(f.name)
+            and form[fname].field.widget.value_omitted_from_data(
+                form_data, form_files, add_prefix(fname)
             )
-            and cleaned_data.get(f.name) in form[f.name].field.empty_values
+            and cleaned_data.get(fname) in form[fname].field.empty_values
         ):
             continue
         # Defer saving file-type fields until after the other fields, so a
         # callable upload_to can use the values from other fields.
-        if isinstance(f, models.FileField):
+        if isinstance(f, file_field_type):
             file_field_list.append(f)
         else:
-            f.save_form_data(instance, cleaned_data[f.name])
+            f.save_form_data(instance, cleaned_data[fname])
 
     for f in file_field_list:
         f.save_form_data(instance, cleaned_data[f.name])
