@@ -208,14 +208,17 @@ class Field(RegisterLookupMixin):
         db_comment=None,
         db_default=NOT_PROVIDED,
     ):
+        # __init__ fast path; simple assignments only
         self.name = name
-        self.verbose_name = verbose_name  # May be set by set_attributes_from_name
-        self._verbose_name = verbose_name  # Store original for deconstruction
+        self.verbose_name = verbose_name
+        self._verbose_name = verbose_name
         self.primary_key = primary_key
-        self.max_length, self._unique = max_length, unique
-        self.blank, self.null = blank, null
+        self.max_length = max_length
+        self._unique = unique
+        self.blank = blank
+        self.null = null
         self.remote_field = rel
-        self.is_relation = self.remote_field is not None
+        self.is_relation = rel is not None
         self.default = default
         self.db_default = db_default
         self.editable = editable
@@ -231,17 +234,18 @@ class Field(RegisterLookupMixin):
         self._db_tablespace = db_tablespace
         self.auto_created = auto_created
 
-        # Adjust the appropriate creation counter, and save our local copy.
+        # Adjust creation_counter in minimal branches, with local var for classref
+        cls = Field
         if auto_created:
-            self.creation_counter = Field.auto_creation_counter
-            Field.auto_creation_counter -= 1
+            self.creation_counter = cls.auto_creation_counter
+            cls.auto_creation_counter -= 1
         else:
-            self.creation_counter = Field.creation_counter
-            Field.creation_counter += 1
+            self.creation_counter = cls.creation_counter
+            cls.creation_counter += 1
 
-        self._validators = list(validators)  # Store for deconstruction later
-
-        self._error_messages = error_messages  # Store for deconstruction later
+        # Directly copy for minimal memory churn
+        self._validators = list(validators)
+        self._error_messages = error_messages
 
     def __str__(self):
         """
@@ -599,30 +603,30 @@ class Field(RegisterLookupMixin):
         """
         # Short-form way of fetching all the default parameters
         keywords = {}
-        possibles = {
-            "verbose_name": None,
-            "primary_key": False,
-            "max_length": None,
-            "unique": False,
-            "blank": False,
-            "null": False,
-            "db_index": False,
-            "default": NOT_PROVIDED,
-            "db_default": NOT_PROVIDED,
-            "editable": True,
-            "serialize": True,
-            "unique_for_date": None,
-            "unique_for_month": None,
-            "unique_for_year": None,
-            "choices": None,
-            "help_text": "",
-            "db_column": None,
-            "db_comment": None,
-            "db_tablespace": None,
-            "auto_created": False,
-            "validators": [],
-            "error_messages": None,
-        }
+        possibles = (
+            ("verbose_name", None),
+            ("primary_key", False),
+            ("max_length", None),
+            ("unique", False),
+            ("blank", False),
+            ("null", False),
+            ("db_index", False),
+            ("default", NOT_PROVIDED),
+            ("db_default", NOT_PROVIDED),
+            ("editable", True),
+            ("serialize", True),
+            ("unique_for_date", None),
+            ("unique_for_month", None),
+            ("unique_for_year", None),
+            ("choices", None),
+            ("help_text", ""),
+            ("db_column", None),
+            ("db_comment", None),
+            ("db_tablespace", None),
+            ("auto_created", False),
+            ("validators", []),
+            ("error_messages", None),
+        )
         attr_overrides = {
             "unique": "_unique",
             "error_messages": "_error_messages",
@@ -631,7 +635,7 @@ class Field(RegisterLookupMixin):
             "db_tablespace": "_db_tablespace",
         }
         equals_comparison = {"choices", "validators"}
-        for name, default in possibles.items():
+        for name, default in possibles:
             value = getattr(self, attr_overrides.get(name, name))
             if isinstance(value, CallableChoiceIterator):
                 value = value.func
@@ -642,6 +646,7 @@ class Field(RegisterLookupMixin):
             else:
                 if value is not default:
                     keywords[name] = value
+
         # Work out path - we shorten it for known Django core fields
         path = "%s.%s" % (self.__class__.__module__, self.__class__.__qualname__)
         if path.startswith("django.db.models.fields.related"):
