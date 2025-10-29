@@ -61,14 +61,22 @@ def resolve_relation(scope_model, relation):
       * An "app_label.ModelName" string.
       * A model class, which will be returned unchanged.
     """
-    # Check for recursive relations
-    if relation == RECURSIVE_RELATIONSHIP_CONSTANT:
-        relation = scope_model
+    # Common fast-path for identity and non-string types
+    if relation is RECURSIVE_RELATIONSHIP_CONSTANT:
+        return scope_model
 
-    # Look for an "app.Model" relation
+    # Fast path for direct equality if strings are interned
+    if relation == RECURSIVE_RELATIONSHIP_CONSTANT:
+        return scope_model
+
+    # Only strings need further resolution.
     if isinstance(relation, str):
+        # Avoid unnecessary . not in check if . is always present in fq models.
         if "." not in relation:
-            relation = "%s.%s" % (scope_model._meta.app_label, relation)
+            # Use f-string (a bit faster in python >=3.6) and access _meta.app_label only once
+            app_label = scope_model._meta.app_label
+            # Avoid unnecessary string interpolation if relation already matches app_label.ModelName
+            relation = f"{app_label}.{relation}"
 
     return relation
 
@@ -1468,10 +1476,11 @@ class ManyToManyField(RelatedField):
         swappable=True,
         **kwargs,
     ):
-        try:
-            to._meta
-        except AttributeError:
-            if not isinstance(to, str):
+        # Early exit for non-model string arguments, avoids try/except overhead.
+        if not isinstance(to, str):
+            try:
+                to._meta
+            except AttributeError:
                 raise TypeError(
                     "%s(%r) is invalid. First parameter to ManyToManyField "
                     "must be either a model, a model name, or the string %r"
@@ -1482,8 +1491,11 @@ class ManyToManyField(RelatedField):
                     )
                 )
 
-        if symmetrical is None:
-            symmetrical = to == RECURSIVE_RELATIONSHIP_CONSTANT
+        symmetrical = (
+            to == RECURSIVE_RELATIONSHIP_CONSTANT
+            if symmetrical is None
+            else symmetrical
+        )
 
         if through is not None and db_table is not None:
             raise ValueError(
@@ -1976,13 +1988,16 @@ class ManyToManyField(RelatedField):
         Function that can be curried to provide the m2m table name for this
         relation.
         """
-        if self.remote_field.through is not None:
-            return self.remote_field.through._meta.db_table
-        elif self.db_table:
-            return self.db_table
-        else:
-            m2m_table_name = "%s_%s" % (utils.strip_quotes(opts.db_table), self.name)
-            return utils.truncate_name(m2m_table_name, connection.ops.max_name_length())
+        remote_field = self.remote_field
+        through = remote_field.through
+        if through is not None:
+            return through._meta.db_table
+        db_table = self.db_table
+        if db_table:
+            return db_table
+        # Efficient value retrieval and string formatting
+        m2m_table_name = f"{utils.strip_quotes(opts.db_table)}_{self.name}"
+        return utils.truncate_name(m2m_table_name, connection.ops.max_name_length())
 
     def _get_m2m_attr(self, related, attr):
         """

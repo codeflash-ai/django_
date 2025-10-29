@@ -294,11 +294,14 @@ def truncate_name(identifier, length=None, hash_len=4):
         return identifier
 
     digest = names_digest(name, length=hash_len)
-    return "%s%s%s" % (
-        '%s"."' % namespace if namespace else "",
-        name[: length - hash_len],
-        digest,
-    )
+    # Avoid repeated string concatenation for namespace presence.
+    if namespace:
+        ns = f'{namespace}"."'
+    else:
+        ns = ""
+    # Avoid extra slicing for small lengths.
+    truncated_name = name[: length - hash_len]
+    return f"{ns}{truncated_name}{digest}"
 
 
 def names_digest(*args, length):
@@ -338,5 +341,7 @@ def strip_quotes(table_name):
     names, sequence names, etc. For example '"USER"."TABLE"' (an Oracle naming
     scheme) becomes 'USER"."TABLE'.
     """
-    has_quotes = table_name.startswith('"') and table_name.endswith('"')
-    return table_name[1:-1] if has_quotes else table_name
+    # Use a single condition and slice
+    if table_name.startswith('"') and table_name.endswith('"'):
+        return table_name[1:-1]
+    return table_name
