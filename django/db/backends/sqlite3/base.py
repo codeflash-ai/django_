@@ -41,9 +41,10 @@ def adapt_datetime(val):
 
 
 def _get_varchar_column(data):
-    if data["max_length"] is None:
+    max_length = data["max_length"]
+    if max_length is None:
         return "varchar"
-    return "varchar(%(max_length)s)" % data
+    return f"varchar({max_length})"
 
 
 Database.register_converter("bool", b"1".__eq__)
