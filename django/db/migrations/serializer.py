@@ -186,29 +186,30 @@ class FrozensetSerializer(BaseUnorderedSequenceSerializer):
 
 class FunctionTypeSerializer(BaseSerializer):
     def serialize(self):
-        if getattr(self.value, "__self__", None) and isinstance(
-            self.value.__self__, type
-        ):
-            klass = self.value.__self__
-            module = klass.__module__
-            return "%s.%s.%s" % (module, klass.__qualname__, self.value.__name__), {
-                "import %s" % module
-            }
+        value = self.value
+        # Fast path: bound method of a class (value.__self__ is type)
+        self_obj = getattr(value, "__self__", None)
+        if self_obj is not None and isinstance(self_obj, type):
+            module = self_obj.__module__
+            # Use f-strings for faster string formatting
+            return (
+                f"{module}.{self_obj.__qualname__}.{value.__name__}",
+                {f"import {module}"},
+            )
         # Further error checking
-        if self.value.__name__ == "<lambda>":
+        if value.__name__ == "<lambda>":
             raise ValueError("Cannot serialize function: lambda")
-        if self.value.__module__ is None:
-            raise ValueError("Cannot serialize function %r: No module" % self.value)
+        module_name = value.__module__
+        if module_name is None:
+            raise ValueError(f"Cannot serialize function {value!r}: No module")
+        qualname = value.__qualname__
 
-        module_name = self.value.__module__
-
-        if "<" not in self.value.__qualname__:  # Qualname can include <locals>
-            return "%s.%s" % (module_name, self.value.__qualname__), {
-                "import %s" % self.value.__module__
-            }
+        # Fast path: qualname does not include '<'
+        if "<" not in qualname:  # Qualname can include <locals>
+            return (f"{module_name}.{qualname}", {f"import {module_name}"})
 
         raise ValueError(
-            "Could not find function %s in %s.\n" % (self.value.__name__, module_name)
+            f"Could not find function {value.__name__} in {module_name}.\n"
         )
 
 
