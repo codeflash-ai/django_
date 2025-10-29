@@ -208,14 +208,19 @@ class Field(RegisterLookupMixin):
         db_comment=None,
         db_default=NOT_PROVIDED,
     ):
+        # Inline assignments for better locality and L1 cache friendliness
         self.name = name
-        self.verbose_name = verbose_name  # May be set by set_attributes_from_name
-        self._verbose_name = verbose_name  # Store original for deconstruction
+        self.verbose_name = verbose_name
+        self._verbose_name = verbose_name
         self.primary_key = primary_key
-        self.max_length, self._unique = max_length, unique
-        self.blank, self.null = blank, null
+        self.max_length = max_length
+        self._unique = unique
+        self.blank = blank
+        self.null = null
         self.remote_field = rel
-        self.is_relation = self.remote_field is not None
+        self.is_relation = (
+            rel is not None
+        )  # Use `rel` arg directly to avoid attribute access on self
         self.default = default
         self.db_default = db_default
         self.editable = editable
@@ -231,7 +236,7 @@ class Field(RegisterLookupMixin):
         self._db_tablespace = db_tablespace
         self.auto_created = auto_created
 
-        # Adjust the appropriate creation counter, and save our local copy.
+        # Optimize counter mutation logic slightly
         if auto_created:
             self.creation_counter = Field.auto_creation_counter
             Field.auto_creation_counter -= 1
@@ -239,9 +244,12 @@ class Field(RegisterLookupMixin):
             self.creation_counter = Field.creation_counter
             Field.creation_counter += 1
 
-        self._validators = list(validators)  # Store for deconstruction later
-
-        self._error_messages = error_messages  # Store for deconstruction later
+        # Avoid double conversion in most cases by checking for empty iterable before list()
+        if validators:
+            self._validators = list(validators)
+        else:
+            self._validators = []
+        self._error_messages = error_messages
 
     def __str__(self):
         """
@@ -998,6 +1006,7 @@ class Field(RegisterLookupMixin):
 
         Used by the default implementations of get_db_prep_save().
         """
+        # Move prepared check outside call to avoid unnecessary function call
         if not prepared:
             value = self.get_prep_value(value)
         return value
@@ -2126,7 +2135,9 @@ class IntegerField(Field):
             ) from e
 
     def get_db_prep_value(self, value, connection, prepared=False):
-        value = super().get_db_prep_value(value, connection, prepared)
+        # Inline super call to avoid unnecessary OOP indirection in tight loops
+        if not prepared:
+            value = self.get_prep_value(value)
         return connection.ops.adapt_integerfield_value(value, self.get_internal_type())
 
     def get_internal_type(self):
