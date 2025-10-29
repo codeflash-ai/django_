@@ -987,7 +987,10 @@ class Field(RegisterLookupMixin):
 
     def get_prep_value(self, value):
         """Perform preliminary non-db specific value checks and conversions."""
-        if isinstance(value, Promise):
+        # Inline Promise treatment to avoid attribute lookup overhead where possible
+        if type(value) is Promise:
+            value = value._proxy____cast()
+        elif isinstance(value, Promise):
             value = value._proxy____cast()
         return value
 
@@ -1292,8 +1295,17 @@ class CharField(Field):
         return str(value)
 
     def get_prep_value(self, value):
-        value = super().get_prep_value(value)
-        return self.to_python(value)
+        # Inline super().get_prep_value logic for directness
+        if type(value) is Promise:
+            value = value._proxy____cast()
+        elif isinstance(value, Promise):
+            value = value._proxy____cast()
+        # Directly call optimized to_python
+        if value is None:
+            return value
+        if type(value) is str:
+            return value
+        return str(value)
 
     def formfield(self, **kwargs):
         # Passing max_length to forms.CharField means that the value's length
