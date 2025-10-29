@@ -1,6 +1,7 @@
 import copy
 import os
 import sys
+from functools import lru_cache
 from importlib import import_module
 from importlib.util import find_spec as importlib_find
 
@@ -82,7 +83,9 @@ def module_has_submodule(package, module_name):
 
     full_module_name = package_name + "." + module_name
     try:
-        return importlib_find(full_module_name, package_path) is not None
+        # Convert package_path to a tuple to ensure hashability for caching
+        package_path_tuple = tuple(package_path)
+        return _find_spec_cached(full_module_name, package_path_tuple) is not None
     except ModuleNotFoundError:
         # When module_name is an invalid dotted path, Python raises
         # ModuleNotFoundError.
@@ -105,3 +108,9 @@ def module_dir(module):
         if filename is not None:
             return os.path.dirname(filename)
     raise ValueError("Cannot determine directory containing %s" % module)
+
+
+@lru_cache(maxsize=128)
+def _find_spec_cached(full_module_name, package_path_tuple):
+    # package_path may be any iterable, but find_spec wants a sequence
+    return importlib_find(full_module_name, package_path_tuple)
