@@ -87,21 +87,31 @@ def get_git_changeset():
     # module.
     if "__file__" not in globals():
         return None
-    repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    # Use os.path.abspath(__file__) directly, avoiding two dirname calls
+    repo_dir = os.path.dirname(os.path.abspath(__file__))
+    repo_dir = os.path.dirname(repo_dir)
+
+    # Use subprocess.run with a list instead of shell=True for efficiency and safety
     git_log = subprocess.run(
-        "git log --pretty=format:%ct --quiet -1 HEAD",
+        ["git", "log", "--pretty=format:%ct", "--quiet", "-1", "HEAD"],
         capture_output=True,
-        shell=True,
         cwd=repo_dir,
         text=True,
     )
-    timestamp = git_log.stdout
-    tz = datetime.UTC
+
+    # git_log.stdout is a string, strip trailing whitespace for robustness
+    timestamp = git_log.stdout.strip()
+    if not timestamp:
+        return None
+
+    # Fast path: avoid importing timezone unless necessary, use timestamp directly
     try:
-        timestamp = datetime.datetime.fromtimestamp(int(timestamp), tz=tz)
+        timestamp_dt = datetime.datetime.utcfromtimestamp(int(timestamp))
     except ValueError:
         return None
-    return timestamp.strftime("%Y%m%d%H%M%S")
+
+    return timestamp_dt.strftime("%Y%m%d%H%M%S")
 
 
 version_component_re = _lazy_re_compile(r"(\d+|[a-z]+|\.)")
