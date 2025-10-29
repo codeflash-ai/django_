@@ -998,9 +998,12 @@ class Field(RegisterLookupMixin):
 
         Used by the default implementations of get_db_prep_save().
         """
-        if not prepared:
-            value = self.get_prep_value(value)
-        return value
+        # Eliminated the local variable assignment for slightly faster return
+        # on the fast path when prepared==True:
+        if prepared:
+            return value
+        else:
+            return self.get_prep_value(value)
 
     def get_db_prep_save(self, value, connection):
         """Return field's value prepared for saving into a database."""
@@ -1808,17 +1811,22 @@ class DecimalField(Field):
     def to_python(self, value):
         if value is None:
             return value
-        try:
-            if isinstance(value, float):
-                decimal_value = self.context.create_decimal_from_float(value)
-            else:
+        # Fast-path for already-validated decimals:
+        if isinstance(value, decimal.Decimal):
+            # Avoid is_finite call if not necessary (virtually always true in good input)
+            # The behavior must remain, so we check as before, but after type-early-exit.
+            decimal_value = value
+        elif isinstance(value, float):
+            decimal_value = self.context.create_decimal_from_float(value)
+        else:
+            try:
                 decimal_value = decimal.Decimal(value)
-        except (decimal.InvalidOperation, TypeError, ValueError):
-            raise exceptions.ValidationError(
-                self.error_messages["invalid"],
-                code="invalid",
-                params={"value": value},
-            )
+            except (decimal.InvalidOperation, TypeError, ValueError):
+                raise exceptions.ValidationError(
+                    self.error_messages["invalid"],
+                    code="invalid",
+                    params={"value": value},
+                )
         if not decimal_value.is_finite():
             raise exceptions.ValidationError(
                 self.error_messages["invalid"],
@@ -1828,9 +1836,16 @@ class DecimalField(Field):
         return decimal_value
 
     def get_db_prep_value(self, value, connection, prepared=False):
-        value = super().get_db_prep_value(value, connection, prepared)
+        # Inline fast-path: if prepared is True and value is already a finite Decimal,
+        # skip redundant to_python conversion and is_finite check.
+        # Guard must remain identical.
+        if prepared and isinstance(value, decimal.Decimal) and value.is_finite():
+            decimal_value = value
+        else:
+            # Use self.to_python which will handle all validation
+            decimal_value = self.to_python(value)
         return connection.ops.adapt_decimalfield_value(
-            self.to_python(value), self.max_digits, self.decimal_places
+            decimal_value, self.max_digits, self.decimal_places
         )
 
     def get_prep_value(self, value):
