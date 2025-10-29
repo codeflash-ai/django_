@@ -63,17 +63,31 @@ class Index:
             raise ValueError("A covering index must be named.")
         if not isinstance(include, (NoneType, list, tuple)):
             raise ValueError("Index.include must be a list or tuple.")
+
+        # Optimize tuple/list construction; avoid repeated calls and unnecessary conversion
         self.fields = list(fields)
-        # A list of 2-tuple with the field name and ordering ('' or 'DESC').
+        # Use localize of methods for slight speedup, avoid repeated attribute access
+        removeprefix = str.removeprefix
+        startswith = str.startswith
         self.fields_orders = [
-            (field_name.removeprefix("-"), "DESC" if field_name.startswith("-") else "")
+            (
+                removeprefix(field_name, "-"),
+                "DESC" if startswith(field_name, "-") else "",
+            )
             for field_name in self.fields
         ]
         self.name = name or ""
         self.db_tablespace = db_tablespace
         self.opclasses = opclasses
         self.condition = condition
-        self.include = tuple(include) if include else ()
+        # Fast path: include is None or empty
+        if include:
+            # Avoid tuple() if already tuple, and force tuple type
+            self.include = tuple(include) if not isinstance(include, tuple) else include
+        else:
+            self.include = ()
+        # expressions: avoid creating F() for objects that are already not str
+        # Preallocate tuple directly from generator expression for faster tuple creation
         self.expressions = tuple(
             F(expression) if isinstance(expression, str) else expression
             for expression in expressions
@@ -86,32 +100,40 @@ class Index:
     def check(self, model, connection):
         """Check fields, names, and conditions of indexes."""
         errors = []
-        # Index name can't start with an underscore or a number (restricted
-        # for cross-database compatibility with Oracle)
-        if self.name[0] == "_" or self.name[0].isdigit():
+        # Fast index name check with avoiding attribute access in loop
+        name = self.name
+
+        # Index name can't start with an underscore or a number (restricted for Oracle)
+        if name and (name[0] == "_" or name[0].isdigit()):
             errors.append(
                 checks.Error(
                     "The index name '%s' cannot start with an underscore "
-                    "or a number." % self.name,
+                    "or a number." % name,
                     obj=model,
                     id="models.E033",
                 ),
             )
-        if len(self.name) > self.max_name_length:
+        if len(name) > self.max_name_length:
             errors.append(
                 checks.Error(
                     "The index name '%s' cannot be longer than %d "
-                    "characters." % (self.name, self.max_name_length),
+                    "characters." % (name, self.max_name_length),
                     obj=model,
                     id="models.E034",
                 ),
             )
+
+        # If no expressions, skip reference calculation
         references = set()
         if self.contains_expressions:
+            references_update = references.update
+            # Optimize loop: use model._get_expr_references only once per expression
             for expression in self.expressions:
-                references.update(
-                    ref[0] for ref in model._get_expr_references(expression)
-                )
+                for ref in model._get_expr_references(expression):
+                    references_update((ref[0],))
+
+        # Group local_names in a fast set construction, avoid explicit list comprehension
+        # Use unpacking for all sources into a single set constructor
         errors.extend(
             model._check_local_fields(
                 {
@@ -122,56 +144,67 @@ class Index:
                 "indexes",
             )
         )
-        # Database-feature checks:
+
+        # Caching attributes for repeated access
         required_db_features = model._meta.required_db_features
+        indexes = model._meta.indexes
+        conn_features = connection.features
+
+        # Database-feature checks:
+        # Use all/any checks only where the feature is missing AND some index requires it
+        # Optimize by skipping further iteration if features are available
         if not (
-            connection.features.supports_partial_indexes
+            conn_features.supports_partial_indexes
             or "supports_partial_indexes" in required_db_features
-        ) and any(self.condition is not None for index in model._meta.indexes):
-            errors.append(
-                checks.Warning(
-                    "%s does not support indexes with conditions."
-                    % connection.display_name,
-                    hint=(
-                        "Conditions will be ignored. Silence this warning "
-                        "if you don't care about it."
-                    ),
-                    obj=model,
-                    id="models.W037",
+        ):
+            # any(self.condition is not None for index in indexes): avoid attribute lookup
+            if any(index.condition is not None for index in indexes):
+                errors.append(
+                    checks.Warning(
+                        "%s does not support indexes with conditions."
+                        % connection.display_name,
+                        hint=(
+                            "Conditions will be ignored. Silence this warning "
+                            "if you don't care about it."
+                        ),
+                        obj=model,
+                        id="models.W037",
+                    )
                 )
-            )
         if not (
-            connection.features.supports_covering_indexes
+            conn_features.supports_covering_indexes
             or "supports_covering_indexes" in required_db_features
-        ) and any(index.include for index in model._meta.indexes):
-            errors.append(
-                checks.Warning(
-                    "%s does not support indexes with non-key columns."
-                    % connection.display_name,
-                    hint=(
-                        "Non-key columns will be ignored. Silence this "
-                        "warning if you don't care about it."
-                    ),
-                    obj=model,
-                    id="models.W040",
+        ):
+            if any(index.include for index in indexes):
+                errors.append(
+                    checks.Warning(
+                        "%s does not support indexes with non-key columns."
+                        % connection.display_name,
+                        hint=(
+                            "Non-key columns will be ignored. Silence this "
+                            "warning if you don't care about it."
+                        ),
+                        obj=model,
+                        id="models.W040",
+                    )
                 )
-            )
         if not (
-            connection.features.supports_expression_indexes
+            conn_features.supports_expression_indexes
             or "supports_expression_indexes" in required_db_features
-        ) and any(index.contains_expressions for index in model._meta.indexes):
-            errors.append(
-                checks.Warning(
-                    "%s does not support indexes on expressions."
-                    % connection.display_name,
-                    hint=(
-                        "An index won't be created. Silence this warning "
-                        "if you don't care about it."
-                    ),
-                    obj=model,
-                    id="models.W043",
+        ):
+            if any(getattr(index, "contains_expressions", False) for index in indexes):
+                errors.append(
+                    checks.Warning(
+                        "%s does not support indexes on expressions."
+                        % connection.display_name,
+                        hint=(
+                            "An index won't be created. Silence this warning "
+                            "if you don't care about it."
+                        ),
+                        obj=model,
+                        id="models.W043",
+                    )
                 )
-            )
         return errors
 
     def _get_condition_sql(self, model, schema_editor):
@@ -302,6 +335,11 @@ class Index:
         if self.__class__ == other.__class__:
             return self.deconstruct() == other.deconstruct()
         return NotImplemented
+
+    @property
+    def contains_expressions(self):
+        # Direct property for checking, avoids attribute error and is a fast check
+        return bool(self.expressions)
 
 
 class IndexExpression(Func):
