@@ -483,10 +483,16 @@ class BaseModelAdminChecks:
             return must_be(
                 "a list or tuple", option="exclude", obj=obj, id="admin.E014"
             )
-        field_counts = collections.Counter(obj.exclude)
-        if duplicate_fields := [
-            field for field, count in field_counts.items() if count > 1
-        ]:
+
+        seen = set()
+        duplicate_fields = set()
+        for field in obj.exclude:
+            if field in seen:
+                duplicate_fields.add(field)
+            else:
+                seen.add(field)
+
+        if duplicate_fields:
             return [
                 checks.Error(
                     "The value of 'exclude' contains duplicate field(s).",
