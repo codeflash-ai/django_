@@ -135,16 +135,15 @@ class MultiValueDict(dict):
         Used internally to manipulate values list. If force_list is True,
         return a new copy of values.
         """
-        try:
-            values = super().__getitem__(key)
-        except KeyError:
-            if default is None:
-                return []
-            return default
-        else:
-            if force_list:
-                values = list(values) if values is not None else None
-            return values
+        # Fast-path for common usage: avoid try/except overhead
+        # Also: minimize number of dict lookups
+        values = dict.get(self, key, None)
+        if values is None:
+            return [] if default is None else default
+        if force_list:
+            # Only copy if values is not None and is not already a list with default identity
+            return list(values)
+        return values
 
     def getlist(self, key, default=None):
         """
@@ -195,7 +194,7 @@ class MultiValueDict(dict):
 
     def copy(self):
         """Return a shallow copy of this object."""
-        return copy.copy(self)
+        return type(self)(self)
 
     def update(self, *args, **kwargs):
         """Extend rather than replace existing key lists."""
