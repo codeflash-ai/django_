@@ -63,16 +63,18 @@ class Index:
             raise ValueError("A covering index must be named.")
         if not isinstance(include, (NoneType, list, tuple)):
             raise ValueError("Index.include must be a list or tuple.")
+
         self.fields = list(fields)
         # A list of 2-tuple with the field name and ordering ('' or 'DESC').
         self.fields_orders = [
-            (field_name.removeprefix("-"), "DESC" if field_name.startswith("-") else "")
+            (field_name[1:], "DESC") if field_name.startswith("-") else (field_name, "")
             for field_name in self.fields
         ]
         self.name = name or ""
         self.db_tablespace = db_tablespace
         self.opclasses = opclasses
         self.condition = condition
+
         self.include = tuple(include) if include else ()
         self.expressions = tuple(
             F(expression) if isinstance(expression, str) else expression
