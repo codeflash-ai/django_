@@ -28,6 +28,7 @@ from django.utils.hashable import make_hashable
 from django.utils.text import capfirst, get_text_list
 from django.utils.translation import gettext
 from django.utils.translation import gettext_lazy as _
+from django.db.models import ForeignKey
 
 __all__ = (
     "ModelForm",
@@ -1232,15 +1233,17 @@ def _get_foreign_key(parent_model, model, fk_name=None, can_fail=False):
     True, raise an exception if there isn't a ForeignKey from model to
     parent_model.
     """
-    # avoid circular import
-    from django.db.models import ForeignKey
-
     opts = model._meta
+    all_parents = (*parent_model._meta.all_parents, parent_model)
+
     if fk_name:
-        fks_to_parent = [f for f in opts.fields if f.name == fk_name]
-        if len(fks_to_parent) == 1:
-            fk = fks_to_parent[0]
-            all_parents = (*parent_model._meta.all_parents, parent_model)
+        # Search for the single matching field by name.
+        fk = None
+        for f in opts.fields:
+            if f.name == fk_name:
+                fk = f
+                break
+        if fk is not None:
             if (
                 not isinstance(fk, ForeignKey)
                 or (
@@ -1259,29 +1262,29 @@ def _get_foreign_key(parent_model, model, fk_name=None, can_fail=False):
                     "fk_name '%s' is not a ForeignKey to '%s'."
                     % (fk_name, parent_model._meta.label)
                 )
-        elif not fks_to_parent:
+        else:
             raise ValueError(
                 "'%s' has no field named '%s'." % (model._meta.label, fk_name)
             )
     else:
-        # Try to discover what the ForeignKey from model to parent_model is
-        all_parents = (*parent_model._meta.all_parents, parent_model)
-        fks_to_parent = [
-            f
-            for f in opts.fields
-            if isinstance(f, ForeignKey)
-            and (
+        found_fk = None
+        fk_count = 0
+        for f in opts.fields:
+            if isinstance(f, ForeignKey) and (
                 f.remote_field.model == parent_model
                 or f.remote_field.model in all_parents
                 or (
                     f.remote_field.model._meta.proxy
                     and f.remote_field.model._meta.proxy_for_model in all_parents
                 )
-            )
-        ]
-        if len(fks_to_parent) == 1:
-            fk = fks_to_parent[0]
-        elif not fks_to_parent:
+            ):
+                fk_count += 1
+                if fk_count > 1:
+                    break
+                found_fk = f
+        if fk_count == 1:
+            fk = found_fk
+        elif fk_count == 0:
             if can_fail:
                 return
             raise ValueError(
