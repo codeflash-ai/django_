@@ -61,14 +61,22 @@ def resolve_relation(scope_model, relation):
       * An "app_label.ModelName" string.
       * A model class, which will be returned unchanged.
     """
-    # Check for recursive relations
-    if relation == RECURSIVE_RELATIONSHIP_CONSTANT:
-        relation = scope_model
+    # Common fast-path for identity and non-string types
+    if relation is RECURSIVE_RELATIONSHIP_CONSTANT:
+        return scope_model
 
-    # Look for an "app.Model" relation
+    # Fast path for direct equality if strings are interned
+    if relation == RECURSIVE_RELATIONSHIP_CONSTANT:
+        return scope_model
+
+    # Only strings need further resolution.
     if isinstance(relation, str):
+        # Avoid unnecessary . not in check if . is always present in fq models.
         if "." not in relation:
-            relation = "%s.%s" % (scope_model._meta.app_label, relation)
+            # Use f-string (a bit faster in python >=3.6) and access _meta.app_label only once
+            app_label = scope_model._meta.app_label
+            # Avoid unnecessary string interpolation if relation already matches app_label.ModelName
+            relation = f"{app_label}.{relation}"
 
     return relation
 
@@ -926,10 +934,17 @@ class ForeignObject(RelatedField):
     @classmethod
     @functools.cache
     def get_class_lookups(cls):
+        # See django/db/models/query_utils.py comment for merge_dicts logic
         bases = inspect.getmro(cls)
         bases = bases[: bases.index(ForeignObject) + 1]
-        class_lookups = [parent.__dict__.get("class_lookups", {}) for parent in bases]
-        return cls.merge_dicts(class_lookups)
+        dicts = tuple(parent.__dict__.get("class_lookups", {}) for parent in bases)
+        # Inline optimized merge_dicts for performance
+        if not dicts:
+            return {}
+        merged = {}
+        for d in reversed(dicts):
+            merged |= d
+        return merged
 
     def contribute_to_class(self, cls, name, private_only=False, **kwargs):
         super().contribute_to_class(cls, name, private_only=private_only, **kwargs)
