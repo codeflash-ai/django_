@@ -1725,10 +1725,20 @@ class DecimalField(Field):
         return errors
 
     def _check_decimal_places(self):
-        try:
-            decimal_places = int(self.decimal_places)
+        decimal_places = self.decimal_places
+        if isinstance(decimal_places, int):
             if decimal_places < 0:
-                raise ValueError()
+                return [
+                    checks.Error(
+                        "'decimal_places' must be a non-negative integer.",
+                        obj=self,
+                        id="fields.E131",
+                    )
+                ]
+            else:
+                return []
+        try:
+            decimal_places_int = int(decimal_places)
         except TypeError:
             return [
                 checks.Error(
@@ -1746,6 +1756,14 @@ class DecimalField(Field):
                 )
             ]
         else:
+            if decimal_places_int < 0:
+                return [
+                    checks.Error(
+                        "'decimal_places' must be a non-negative integer.",
+                        obj=self,
+                        id="fields.E131",
+                    )
+                ]
             return []
 
     def _check_max_digits(self):
