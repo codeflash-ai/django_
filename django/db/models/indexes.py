@@ -63,6 +63,7 @@ class Index:
             raise ValueError("A covering index must be named.")
         if not isinstance(include, (NoneType, list, tuple)):
             raise ValueError("Index.include must be a list or tuple.")
+
         self.fields = list(fields)
         # A list of 2-tuple with the field name and ordering ('' or 'DESC').
         self.fields_orders = [
@@ -227,19 +228,38 @@ class Index:
         return schema_editor._delete_index_sql(model, self.name, **kwargs)
 
     def deconstruct(self):
-        path = "%s.%s" % (self.__class__.__module__, self.__class__.__name__)
-        path = path.replace("django.db.models.indexes", "django.db.models")
-        kwargs = {"name": self.name}
-        if self.fields:
-            kwargs["fields"] = self.fields
-        if self.db_tablespace is not None:
-            kwargs["db_tablespace"] = self.db_tablespace
-        if self.opclasses:
-            kwargs["opclasses"] = self.opclasses
-        if self.condition:
-            kwargs["condition"] = self.condition
-        if self.include:
-            kwargs["include"] = self.include
+        # Inlining string formatting and using f-strings for slight performance improvement.
+        cls = self.__class__
+        module_name = cls.__module__
+        class_name = cls.__name__
+        # Avoid slow .replace by only replacing the prefix if present
+        # This is faster than .replace for known string locations
+        if module_name == "django.db.models.indexes":
+            path = f"django.db.models.{class_name}"
+        else:
+            path = f"{module_name}.{class_name}"
+
+        kwargs = {}
+        # Add all values in a single pass, avoiding dictionary mutations when possible for speed.
+        # Ordering of fields in kwargs will still be preserved due to short-circuiting on None/empty.
+        name = self.name
+        kwargs["name"] = name
+        fields = self.fields
+        if fields:
+            kwargs["fields"] = fields
+        db_tablespace = self.db_tablespace
+        if db_tablespace is not None:
+            kwargs["db_tablespace"] = db_tablespace
+        opclasses = self.opclasses
+        if opclasses:
+            kwargs["opclasses"] = opclasses
+        condition = self.condition
+        if condition:
+            kwargs["condition"] = condition
+        include = self.include
+        if include:
+            kwargs["include"] = include
+
         return (path, self.expressions, kwargs)
 
     def clone(self):
