@@ -539,8 +539,7 @@ class Field(RegisterLookupMixin):
             output_field is None or output_field == self
         ):
             return self.cached_col
-        from django.db.models.expressions import Col
-
+        Col = self._get_col_class()
         return Col(alias, self, output_field)
 
     @property
@@ -1151,6 +1150,17 @@ class Field(RegisterLookupMixin):
     def slice_expression(self, expression, start, length):
         """Return a slice of this field."""
         raise NotSupportedError("This field does not support slicing.")
+
+    # Optimization: move import out of hot path and cache on class
+    # The Col class object will be stored at the class level on first use
+    # This avoids a repeated costly import inside a hot loop
+    @classmethod
+    def _get_col_class(cls):
+        if not hasattr(cls, "_col_class"):
+            from django.db.models.expressions import Col
+
+            cls._col_class = Col
+        return cls._col_class
 
 
 class BooleanField(Field):
