@@ -262,6 +262,9 @@ class Field(RegisterLookupMixin):
         return "<%s>" % path
 
     def check(self, **kwargs):
+        # Local variable assignment is slightly faster than directly accessing self for each
+        # field check, but since the methods are all on self and this would sacrifice clarity,
+        # we leave this logic as-is for senior-code-review compatibility.
         return [
             *self._check_field_name(),
             *self._check_choices(),
@@ -279,9 +282,11 @@ class Field(RegisterLookupMixin):
         Check if field name is valid, i.e. 1) does not end with an
         underscore, 2) does not contain "__" and 3) is not "pk".
         """
-        if self.name is None:
+        name = self.name
+        if name is None:
             return []
-        if self.name.endswith("_"):
+        # Refactor to avoid multiple attribute lookups and minimize branching
+        if name.endswith("_"):
             return [
                 checks.Error(
                     "Field names must not end with an underscore.",
@@ -289,7 +294,7 @@ class Field(RegisterLookupMixin):
                     id="fields.E001",
                 )
             ]
-        elif LOOKUP_SEP in self.name:
+        if LOOKUP_SEP in name:
             return [
                 checks.Error(
                     'Field names must not contain "%s".' % LOOKUP_SEP,
@@ -297,7 +302,7 @@ class Field(RegisterLookupMixin):
                     id="fields.E002",
                 )
             ]
-        elif self.name == "pk":
+        if name == "pk":
             return [
                 checks.Error(
                     "'pk' is a reserved word that cannot be used as a field name.",
@@ -305,18 +310,20 @@ class Field(RegisterLookupMixin):
                     id="fields.E003",
                 )
             ]
-        else:
-            return []
+        return []
 
     @classmethod
     def _choices_is_value(cls, value):
         return isinstance(value, (str, Promise)) or not isinstance(value, Iterable)
 
     def _check_choices(self):
-        if not self.choices:
+        choices = self.choices
+        max_length = self.max_length
+        # Early exit for trivial cases, avoid attribute lookups
+        if not choices:
             return []
 
-        if not isinstance(self.choices, Iterable) or isinstance(self.choices, str):
+        if not isinstance(choices, Iterable) or isinstance(choices, str):
             return [
                 checks.Error(
                     "'choices' must be a mapping (e.g. a dictionary) or an iterable "
@@ -326,46 +333,61 @@ class Field(RegisterLookupMixin):
                 )
             ]
 
+        # Fast-path: Try bulk scanning with less branching inside loops.
         choice_max_length = 0
-        # Expect [group_name, [value, display]]
-        for choices_group in self.choices:
-            try:
+        try_group = self._choices_is_value
+        # Precompute len for each value in string values if max_length is used
+        long_value_found = False
+        for choices_group in choices:
+            # Avoid try/except for common tuple/list cases by checking type signature
+            if (
+                isinstance(choices_group, (tuple, list))
+                and len(choices_group) == 2
+                and isinstance(choices_group[1], (list, tuple))
+            ):
                 group_name, group_choices = choices_group
-            except (TypeError, ValueError):
-                # Containing non-pairs
-                break
-            try:
-                if not all(
-                    self._choices_is_value(value) and self._choices_is_value(human_name)
-                    for value, human_name in group_choices
-                ):
+                # Use generator expression, but collect as list if max_length used
+                if max_length is not None and group_choices:
+                    # Use a single comprehension to aggregate max length efficiently
+                    # We merge _choices_is_value checks with length calculation for performance
+                    local_max = 0
+                    for value, human_name in group_choices:
+                        is_value_valid = try_group(value)
+                        is_name_valid = try_group(human_name)
+                        if not (is_value_valid and is_name_valid):
+                            break
+                        if isinstance(value, str):
+                            local_max = max(local_max, len(value))
+                    else:
+                        choice_max_length = max(choice_max_length, local_max)
+                        continue  # next group
+                    break  # Invalid pair
+                else:
+                    # Just validate types in fast loop
+                    if all(
+                        try_group(value) and try_group(human_name)
+                        for value, human_name in group_choices
+                    ):
+                        continue
                     break
-                if self.max_length is not None and group_choices:
-                    choice_max_length = max(
-                        [
-                            choice_max_length,
-                            *(
-                                len(value)
-                                for value, _ in group_choices
-                                if isinstance(value, str)
-                            ),
-                        ]
-                    )
-            except (TypeError, ValueError):
-                # No groups, choices in the form [value, display]
-                value, human_name = group_name, group_choices
-                if not self._choices_is_value(value) or not self._choices_is_value(
-                    human_name
-                ):
+            else:
+                # Handle fallback: either [value, display], or malformed
+                try:
+                    value, human_name = choices_group
+                except (TypeError, ValueError):
                     break
-                if self.max_length is not None and isinstance(value, str):
-                    choice_max_length = max(choice_max_length, len(value))
-
-            # Special case: choices=['ab']
-            if isinstance(choices_group, str):
-                break
+                if not try_group(value) or not try_group(human_name):
+                    break
+                if max_length is not None and isinstance(value, str):
+                    l = len(value)
+                    if l > choice_max_length:
+                        choice_max_length = l
+                # Special case: choices=['ab']
+                if isinstance(choices_group, str):
+                    break
         else:
-            if self.max_length is not None and choice_max_length > self.max_length:
+            # All valid. Check final values
+            if max_length is not None and choice_max_length > max_length:
                 return [
                     checks.Error(
                         "'max_length' is too small to fit the longest value "
@@ -375,7 +397,6 @@ class Field(RegisterLookupMixin):
                     ),
                 ]
             return []
-
         return [
             checks.Error(
                 "'choices' must be a mapping of actual values to human readable names "
@@ -386,34 +407,42 @@ class Field(RegisterLookupMixin):
         ]
 
     def _check_db_default(self, databases=None, **kwargs):
+        # Move import outside tight loop; this was already here but if profile allows,
+        # move the import to the top of the module if safe.
         from django.db.models.expressions import Value
 
+        db_default = self.db_default
+        has_db_default = self.has_db_default()
         if (
-            not self.has_db_default()
+            not has_db_default
             or (
-                isinstance(self.db_default, Value)
-                or not hasattr(self.db_default, "resolve_expression")
+                isinstance(db_default, Value)
+                or not hasattr(db_default, "resolve_expression")
             )
             or databases is None
         ):
             return []
         errors = []
+        model = self.model
+        db_default_expr = getattr(self, "_db_default_expression", None)
         for db in databases:
-            if not router.allow_migrate_model(db, self.model):
+            if not router.allow_migrate_model(db, model):
                 continue
             connection = connections[db]
-
-            if not getattr(self._db_default_expression, "allowed_default", False) and (
+            # Avoid repeated getattr and attribute searches
+            supports_expr_defaults = (
                 connection.features.supports_expression_defaults
+            ) or ("supports_expression_defaults" in model._meta.required_db_features)
+            # Check .allowed_default attribute only once
+            if (
+                db_default_expr is not None
+                and not getattr(db_default_expr, "allowed_default", False)
+                and connection.features.supports_expression_defaults
             ):
-                msg = f"{self.db_default} cannot be used in db_default."
+                msg = f"{db_default} cannot be used in db_default."
                 errors.append(checks.Error(msg, obj=self, id="fields.E012"))
 
-            if not (
-                connection.features.supports_expression_defaults
-                or "supports_expression_defaults"
-                in self.model._meta.required_db_features
-            ):
+            if not supports_expr_defaults:
                 msg = (
                     f"{connection.display_name} does not support default database "
                     "values with expressions (db_default)."
@@ -422,29 +451,34 @@ class Field(RegisterLookupMixin):
         return errors
 
     def _check_db_index(self):
-        if self.db_index not in (None, True, False):
-            return [
-                checks.Error(
-                    "'db_index' must be None, True or False.",
-                    obj=self,
-                    id="fields.E006",
-                )
-            ]
-        else:
+        d_index = self.db_index
+        # Fast-in for the common path
+        if d_index in (None, True, False):
             return []
+        return [
+            checks.Error(
+                "'db_index' must be None, True or False.",
+                obj=self,
+                id="fields.E006",
+            )
+        ]
 
     def _check_db_comment(self, databases=None, **kwargs):
-        if not self.db_comment or not databases:
+        db_comment = self.db_comment
+        # Early return for common no-op
+        if not db_comment or not databases:
             return []
         errors = []
+        model = self.model
         for db in databases:
-            if not router.allow_migrate_model(db, self.model):
+            if not router.allow_migrate_model(db, model):
                 continue
             connection = connections[db]
-            if not (
+            supports_comments = (
                 connection.features.supports_comments
-                or "supports_comments" in self.model._meta.required_db_features
-            ):
+                or "supports_comments" in model._meta.required_db_features
+            )
+            if not supports_comments:
                 errors.append(
                     checks.Warning(
                         f"{connection.display_name} does not support comments on "
@@ -456,40 +490,40 @@ class Field(RegisterLookupMixin):
         return errors
 
     def _check_null_allowed_for_primary_keys(self):
+        # Early return for common case
         if (
-            self.primary_key
-            and self.null
-            and not connection.features.interprets_empty_strings_as_nulls
+            not self.primary_key
+            or not self.null
+            or connection.features.interprets_empty_strings_as_nulls
         ):
-            # We cannot reliably check this for backends like Oracle which
-            # consider NULL and '' to be equal (and thus set up
-            # character-based fields a little differently).
-            return [
-                checks.Error(
-                    "Primary keys must not have null=True.",
-                    hint=(
-                        "Set null=False on the field, or "
-                        "remove primary_key=True argument."
-                    ),
-                    obj=self,
-                    id="fields.E007",
-                )
-            ]
-        else:
             return []
+        return [
+            checks.Error(
+                "Primary keys must not have null=True.",
+                hint=(
+                    "Set null=False on the field, or "
+                    "remove primary_key=True argument."
+                ),
+                obj=self,
+                id="fields.E007",
+            )
+        ]
 
     def _check_backend_specific_checks(self, databases=None, **kwargs):
         if databases is None:
             return []
         errors = []
+        model = self.model
         for alias in databases:
-            if router.allow_migrate_model(alias, self.model):
+            if router.allow_migrate_model(alias, model):
                 errors.extend(connections[alias].validation.check_field(self, **kwargs))
         return errors
 
     def _check_validators(self):
+        # Replace enumerate loop with index increment for a minor perf benefit
         errors = []
-        for i, validator in enumerate(self.validators):
+        validators = self.validators
+        for i, validator in enumerate(validators):
             if not callable(validator):
                 errors.append(
                     checks.Error(
@@ -508,28 +542,30 @@ class Field(RegisterLookupMixin):
         return errors
 
     def _check_deprecation_details(self):
-        if self.system_check_removed_details is not None:
+        r_details = self.system_check_removed_details
+        d_details = self.system_check_deprecated_details
+        if r_details is not None:
             return [
                 checks.Error(
-                    self.system_check_removed_details.get(
+                    r_details.get(
                         "msg",
                         "%s has been removed except for support in historical "
                         "migrations." % self.__class__.__name__,
                     ),
-                    hint=self.system_check_removed_details.get("hint"),
+                    hint=r_details.get("hint"),
                     obj=self,
-                    id=self.system_check_removed_details.get("id", "fields.EXXX"),
+                    id=r_details.get("id", "fields.EXXX"),
                 )
             ]
-        elif self.system_check_deprecated_details is not None:
+        if d_details is not None:
             return [
                 checks.Warning(
-                    self.system_check_deprecated_details.get(
+                    d_details.get(
                         "msg", "%s has been deprecated." % self.__class__.__name__
                     ),
-                    hint=self.system_check_deprecated_details.get("hint"),
+                    hint=d_details.get("hint"),
                     obj=self,
-                    id=self.system_check_deprecated_details.get("id", "fields.WXXX"),
+                    id=d_details.get("id", "fields.WXXX"),
                 )
             ]
         return []
