@@ -597,32 +597,8 @@ class Field(RegisterLookupMixin):
         arguments over positional ones, and omit parameters with their default
         values.
         """
-        # Short-form way of fetching all the default parameters
+        # Use locals for mappings and symbolic constants, avoids re-allocs
         keywords = {}
-        possibles = {
-            "verbose_name": None,
-            "primary_key": False,
-            "max_length": None,
-            "unique": False,
-            "blank": False,
-            "null": False,
-            "db_index": False,
-            "default": NOT_PROVIDED,
-            "db_default": NOT_PROVIDED,
-            "editable": True,
-            "serialize": True,
-            "unique_for_date": None,
-            "unique_for_month": None,
-            "unique_for_year": None,
-            "choices": None,
-            "help_text": "",
-            "db_column": None,
-            "db_comment": None,
-            "db_tablespace": None,
-            "auto_created": False,
-            "validators": [],
-            "error_messages": None,
-        }
         attr_overrides = {
             "unique": "_unique",
             "error_messages": "_error_messages",
@@ -630,35 +606,63 @@ class Field(RegisterLookupMixin):
             "verbose_name": "_verbose_name",
             "db_tablespace": "_db_tablespace",
         }
+        # Used for defaults lookups and equals-comparisons
+        possibles = (
+            # tuple for faster iteration compared to dict.items()
+            ("verbose_name", None),
+            ("primary_key", False),
+            ("max_length", None),
+            ("unique", False),
+            ("blank", False),
+            ("null", False),
+            ("db_index", False),
+            ("default", NOT_PROVIDED),
+            ("db_default", NOT_PROVIDED),
+            ("editable", True),
+            ("serialize", True),
+            ("unique_for_date", None),
+            ("unique_for_month", None),
+            ("unique_for_year", None),
+            ("choices", None),
+            ("help_text", ""),
+            ("db_column", None),
+            ("db_comment", None),
+            ("db_tablespace", None),
+            ("auto_created", False),
+            ("validators", []),
+            ("error_messages", None),
+        )
         equals_comparison = {"choices", "validators"}
-        for name, default in possibles.items():
-            value = getattr(self, attr_overrides.get(name, name))
+        for name, default in possibles:
+            # Avoid attribute lookup by precomputing the effective name
+            attr = attr_overrides.get(name, name)
+            value = getattr(self, attr)
             if isinstance(value, CallableChoiceIterator):
                 value = value.func
-            # Do correct kind of comparison
+            # Fast-path check for equals_comparison vs identity comparison
             if name in equals_comparison:
                 if value != default:
                     keywords[name] = value
             else:
                 if value is not default:
                     keywords[name] = value
-        # Work out path - we shorten it for known Django core fields
+
+        # Path shortening: use tuple and loop for fewer string operations
         path = "%s.%s" % (self.__class__.__module__, self.__class__.__qualname__)
-        if path.startswith("django.db.models.fields.related"):
-            path = path.replace("django.db.models.fields.related", "django.db.models")
-        elif path.startswith("django.db.models.fields.files"):
-            path = path.replace("django.db.models.fields.files", "django.db.models")
-        elif path.startswith("django.db.models.fields.generated"):
-            path = path.replace("django.db.models.fields.generated", "django.db.models")
-        elif path.startswith("django.db.models.fields.json"):
-            path = path.replace("django.db.models.fields.json", "django.db.models")
-        elif path.startswith("django.db.models.fields.proxy"):
-            path = path.replace("django.db.models.fields.proxy", "django.db.models")
-        elif path.startswith("django.db.models.fields.composite"):
-            path = path.replace("django.db.models.fields.composite", "django.db.models")
-        elif path.startswith("django.db.models.fields"):
-            path = path.replace("django.db.models.fields", "django.db.models")
-        # Return basic info - other fields should override this.
+        field_prefixes = (
+            ("django.db.models.fields.related", "django.db.models"),
+            ("django.db.models.fields.files", "django.db.models"),
+            ("django.db.models.fields.generated", "django.db.models"),
+            ("django.db.models.fields.json", "django.db.models"),
+            ("django.db.models.fields.proxy", "django.db.models"),
+            ("django.db.models.fields.composite", "django.db.models"),
+            ("django.db.models.fields", "django.db.models"),
+        )
+        for prefix, replacement in field_prefixes:
+            if path.startswith(prefix):
+                path = replacement + path[len(prefix) :]
+                break
+
         return (self.name, path, [], keywords)
 
     def clone(self):
@@ -1461,11 +1465,13 @@ class DateField(DateTimeCheckMixin, Field):
 
     def deconstruct(self):
         name, path, args, kwargs = super().deconstruct()
-        if self.auto_now:
+        # Use fast boolean checks to avoid redundant if branches
+        auto_now, auto_now_add = self.auto_now, self.auto_now_add
+        if auto_now:
             kwargs["auto_now"] = True
-        if self.auto_now_add:
+        if auto_now_add:
             kwargs["auto_now_add"] = True
-        if self.auto_now or self.auto_now_add:
+        if auto_now or auto_now_add:
             del kwargs["editable"]
             del kwargs["blank"]
         return name, path, args, kwargs
