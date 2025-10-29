@@ -1530,7 +1530,13 @@ class DateField(DateTimeCheckMixin, Field):
             )
 
     def get_prep_value(self, value):
-        value = super().get_prep_value(value)
+        if value is None or (
+            isinstance(value, datetime.date)
+            and not isinstance(value, datetime.datetime)
+        ):
+            return value
+        if isinstance(value, Promise):
+            value = value._proxy____cast()
         return self.to_python(value)
 
     def get_db_prep_value(self, value, connection, prepared=False):
