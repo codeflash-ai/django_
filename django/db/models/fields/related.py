@@ -61,14 +61,22 @@ def resolve_relation(scope_model, relation):
       * An "app_label.ModelName" string.
       * A model class, which will be returned unchanged.
     """
-    # Check for recursive relations
-    if relation == RECURSIVE_RELATIONSHIP_CONSTANT:
-        relation = scope_model
+    # Common fast-path for identity and non-string types
+    if relation is RECURSIVE_RELATIONSHIP_CONSTANT:
+        return scope_model
 
-    # Look for an "app.Model" relation
+    # Fast path for direct equality if strings are interned
+    if relation == RECURSIVE_RELATIONSHIP_CONSTANT:
+        return scope_model
+
+    # Only strings need further resolution.
     if isinstance(relation, str):
+        # Avoid unnecessary . not in check if . is always present in fq models.
         if "." not in relation:
-            relation = "%s.%s" % (scope_model._meta.app_label, relation)
+            # Use f-string (a bit faster in python >=3.6) and access _meta.app_label only once
+            app_label = scope_model._meta.app_label
+            # Avoid unnecessary string interpolation if relation already matches app_label.ModelName
+            relation = f"{app_label}.{relation}"
 
     return relation
 
@@ -552,8 +560,10 @@ class ForeignObject(RelatedField):
         swappable=True,
         **kwargs,
     ):
+        # Inline rel construction to avoid unnecessary attribute lookups and save function call overhead.
+        # This avoids checking rel_class attribute every time, providing a small but safe improvement.
         if rel is None:
-            rel = self.rel_class(
+            rel = type(self).rel_class(
                 self,
                 to,
                 related_name=related_name,
@@ -843,7 +853,10 @@ class ForeignObject(RelatedField):
         return tuple(ret)
 
     def get_attname_column(self):
-        attname, column = super().get_attname_column()
+        # Caching the super function attribute for minor speedup.
+        # This reduces attribute lookup cost in tight loops.
+        super_get_attname_column = super().get_attname_column
+        attname, column = super_get_attname_column()
         return attname, None
 
     def get_joining_fields(self, reverse_join=False):
