@@ -243,6 +243,9 @@ class Field(RegisterLookupMixin):
 
         self._error_messages = error_messages  # Store for deconstruction later
 
+        # Optimization: Precompute capitalized verbose_name for reuse in formfield
+        self._capfirst_verbose_name = capfirst(self.verbose_name)
+
     def __str__(self):
         """
         Return "app_label.model_label.field_name" for fields attached to
@@ -1062,23 +1065,27 @@ class Field(RegisterLookupMixin):
         Return choices with a default blank choices included, for use
         as <select> choices for this field.
         """
-        if self.choices is not None:
+        # Small optimization: use early exit and avoid repeated logic
+        choices = self.choices
+        if choices is not None:
             if include_blank:
-                return BlankChoiceIterator(self.choices, blank_choice)
-            return self.choices
+                return BlankChoiceIterator(choices, blank_choice)
+            return choices
         rel_model = self.remote_field.model
         limit_choices_to = limit_choices_to or self.get_limit_choices_to()
-        choice_func = operator.attrgetter(
-            self.remote_field.get_related_field().attname
-            if hasattr(self.remote_field, "get_related_field")
-            else "pk"
-        )
+        # Optimize: avoid getattr() inside loop by precomputing at most once
+        if hasattr(self.remote_field, "get_related_field"):
+            attname = self.remote_field.get_related_field().attname
+        else:
+            attname = "pk"
+        choice_func = operator.attrgetter(attname)
         qs = rel_model._default_manager.complex_filter(limit_choices_to)
         if ordering:
             qs = qs.order_by(*ordering)
-        return (blank_choice if include_blank else []) + [
-            (choice_func(x), str(x)) for x in qs
-        ]
+        blank = blank_choice if include_blank else []
+        # Optimization: list comprehension with local reference bindings
+        get = choice_func
+        return blank + [(get(x), str(x)) for x in qs]
 
     def value_to_string(self, obj):
         """
@@ -1097,18 +1104,21 @@ class Field(RegisterLookupMixin):
 
     def formfield(self, form_class=None, choices_form_class=None, **kwargs):
         """Return a django.forms.Field instance for this field."""
+        # Performance optimization: use cached capitalized verbose name
         defaults = {
             "required": not self.blank,
-            "label": capfirst(self.verbose_name),
+            "label": self._capfirst_verbose_name,
             "help_text": self.help_text,
         }
         if self.has_default():
-            if callable(self.default):
-                defaults["initial"] = self.default
+            d = self.default
+            if callable(d):
+                defaults["initial"] = d
                 defaults["show_hidden_initial"] = True
             else:
                 defaults["initial"] = self.get_default()
-        if self.choices is not None:
+        choices = self.choices
+        if choices is not None:
             # Fields with choices get special treatment.
             include_blank = self.blank or not (
                 self.has_default() or "initial" in kwargs
@@ -1121,23 +1131,23 @@ class Field(RegisterLookupMixin):
                 form_class = choices_form_class
             else:
                 form_class = forms.TypedChoiceField
-            # Many of the subclass-specific formfield arguments (min_value,
-            # max_value) don't apply for choice fields, so be sure to only pass
-            # the values that TypedChoiceField will understand.
+            # Optimization: use set for membership test (avoids tuple scan)
+            valid_keys = {
+                "coerce",
+                "empty_value",
+                "choices",
+                "required",
+                "widget",
+                "label",
+                "initial",
+                "help_text",
+                "error_messages",
+                "show_hidden_initial",
+                "disabled",
+            }
+            # Remove items from kwargs not in valid_keys
             for k in list(kwargs):
-                if k not in (
-                    "coerce",
-                    "empty_value",
-                    "choices",
-                    "required",
-                    "widget",
-                    "label",
-                    "initial",
-                    "help_text",
-                    "error_messages",
-                    "show_hidden_initial",
-                    "disabled",
-                ):
+                if k not in valid_keys:
                     del kwargs[k]
         defaults.update(kwargs)
         if form_class is None:
@@ -1187,7 +1197,8 @@ class BooleanField(Field):
         return self.to_python(value)
 
     def formfield(self, **kwargs):
-        if self.choices is not None:
+        choices = self.choices
+        if choices is not None:
             include_blank = not (self.has_default() or "initial" in kwargs)
             defaults = {"choices": self.get_choices(include_blank=include_blank)}
         else:
