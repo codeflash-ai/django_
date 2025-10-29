@@ -1179,9 +1179,13 @@ class ModelAdminChecks(BaseModelAdminChecks):
         """Check search_fields is a sequence."""
 
         if not isinstance(obj.search_fields, (list, tuple)):
-            return must_be(
-                "a list or tuple", option="search_fields", obj=obj, id="admin.E126"
-            )
+            return [
+                checks.Error(
+                    "The value of 'search_fields' must be a list or tuple.",
+                    obj=obj.__class__,
+                    id="admin.E126",
+                ),
+            ]
         else:
             return []
 
