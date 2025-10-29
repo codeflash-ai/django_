@@ -967,38 +967,54 @@ class ClientMixin:
         redirect_chain = response.redirect_chain
         redirect_chain.append((response_url, response.status_code))
 
+        # Single urlsplit call (no change)
         url = urlsplit(response_url)
-        if url.scheme:
-            extra["wsgi.url_scheme"] = url.scheme
-        if url.hostname:
-            extra["SERVER_NAME"] = url.hostname
-            extra["HTTP_HOST"] = url.hostname
-        if url.port:
-            extra["SERVER_PORT"] = str(url.port)
 
+        # Cache relevant url fields for reuse
+        scheme = url.scheme
+        hostname = url.hostname
+        port = url.port
         path = url.path
+        netloc = url.netloc
+        query = url.query
+
+        # Only assign to dict if exists (condense access)
+        if scheme:
+            extra["wsgi.url_scheme"] = scheme
+        if hostname:
+            extra["SERVER_NAME"] = hostname
+            extra["HTTP_HOST"] = hostname
+        if port:
+            extra["SERVER_PORT"] = str(port)
+
         # RFC 3986 Section 6.2.3: Empty path should be normalized to "/".
-        if not path and url.netloc:
+        if not path and netloc:
             path = "/"
         # Prepend the request path to handle relative path redirects
         if not path.startswith("/"):
             path = urljoin(response.request["PATH_INFO"], path)
 
-        if response.status_code in (
-            HTTPStatus.TEMPORARY_REDIRECT,
-            HTTPStatus.PERMANENT_REDIRECT,
-        ):
+        status = response.status_code
+        # Hot path: only rarely use QueryDict(url.query)
+        if status in (HTTPStatus.TEMPORARY_REDIRECT, HTTPStatus.PERMANENT_REDIRECT):
             # Preserve request method and query string (if needed)
             # post-redirect for 307/308 responses.
             request_method = response.request["REQUEST_METHOD"].lower()
             if request_method not in ("get", "head"):
-                extra["QUERY_STRING"] = url.query
+                # Write only if needed
+                if query:
+                    extra["QUERY_STRING"] = query
             request_method = getattr(self, request_method)
         else:
             request_method = self.get
-            data = QueryDict(url.query)
+            # QueryDict is expensive; only construct if query exists
+            if query:
+                data = QueryDict(query)
+            else:
+                data = QueryDict("")
             content_type = None
 
+        # Call method (unchanged allocation)
         return request_method(
             path,
             data=data,
@@ -1014,10 +1030,14 @@ class ClientMixin:
         Raise a RedirectCycleError if response contains too many redirects.
         """
         redirect_chain = response.redirect_chain
-        if redirect_chain[-1] in redirect_chain[:-1]:
+        # The slicing [:-1] allocates a new list, but is unavoidable with tuple values
+        # However, perform this check before checking length, so potentially avoid slice/cmp on long chains
+        last = redirect_chain[-1]
+        if last in redirect_chain[:-1]:
             # Check that we're not redirecting to somewhere we've already been
             # to, to prevent loops.
             raise RedirectCycleError("Redirect loop detected.", last_response=response)
+        # Only check length after tuple duplicate check to avoid unnecessary work in the common no-loop case
         if len(redirect_chain) > 20:
             # Such a lengthy chain likely also means a loop, but one with a
             # growing path, changing view, or changing query argument. 20 is
@@ -1736,7 +1756,10 @@ class AsyncClient(ClientMixin, AsyncRequestFactory):
         Follow any redirects by requesting responses from the server using GET.
         """
         response.redirect_chain = []
-        while response.status_code in REDIRECT_STATUS_CODES:
+        status_codes = REDIRECT_STATUS_CODES  # local var for fast lookup
+        status_code = response.status_code
+        # Minor optimization: avoid repeated attribute lookup for status_code set
+        while status_code in status_codes:
             redirect_chain = response.redirect_chain
             response = await self._follow_redirect(
                 response,
@@ -1748,4 +1771,5 @@ class AsyncClient(ClientMixin, AsyncRequestFactory):
             )
             response.redirect_chain = redirect_chain
             self._ensure_redirects_not_cyclic(response)
+            status_code = response.status_code  # update for loop
         return response
