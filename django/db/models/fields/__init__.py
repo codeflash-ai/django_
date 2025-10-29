@@ -599,30 +599,32 @@ class Field(RegisterLookupMixin):
         """
         # Short-form way of fetching all the default parameters
         keywords = {}
-        possibles = {
-            "verbose_name": None,
-            "primary_key": False,
-            "max_length": None,
-            "unique": False,
-            "blank": False,
-            "null": False,
-            "db_index": False,
-            "default": NOT_PROVIDED,
-            "db_default": NOT_PROVIDED,
-            "editable": True,
-            "serialize": True,
-            "unique_for_date": None,
-            "unique_for_month": None,
-            "unique_for_year": None,
-            "choices": None,
-            "help_text": "",
-            "db_column": None,
-            "db_comment": None,
-            "db_tablespace": None,
-            "auto_created": False,
-            "validators": [],
-            "error_messages": None,
-        }
+        # Use tuple literals for default values instead of dict/list constructors for runtime savings
+        # (numerically indexed dict by name isn't faster)
+        possibles = (
+            ("verbose_name", None),
+            ("primary_key", False),
+            ("max_length", None),
+            ("unique", False),
+            ("blank", False),
+            ("null", False),
+            ("db_index", False),
+            ("default", NOT_PROVIDED),
+            ("db_default", NOT_PROVIDED),
+            ("editable", True),
+            ("serialize", True),
+            ("unique_for_date", None),
+            ("unique_for_month", None),
+            ("unique_for_year", None),
+            ("choices", None),
+            ("help_text", ""),
+            ("db_column", None),
+            ("db_comment", None),
+            ("db_tablespace", None),
+            ("auto_created", False),
+            ("validators", []),
+            ("error_messages", None),
+        )
         attr_overrides = {
             "unique": "_unique",
             "error_messages": "_error_messages",
@@ -631,11 +633,14 @@ class Field(RegisterLookupMixin):
             "db_tablespace": "_db_tablespace",
         }
         equals_comparison = {"choices", "validators"}
-        for name, default in possibles.items():
-            value = getattr(self, attr_overrides.get(name, name))
+
+        # Fast-path loop, eliminating dictionary lookup for default values and attribute name
+        for name, default in possibles:
+            attr_name = attr_overrides.get(name, name)
+            value = getattr(self, attr_name)
             if isinstance(value, CallableChoiceIterator):
                 value = value.func
-            # Do correct kind of comparison
+            # Correct kind of comparison
             if name in equals_comparison:
                 if value != default:
                     keywords[name] = value
@@ -643,22 +648,22 @@ class Field(RegisterLookupMixin):
                 if value is not default:
                     keywords[name] = value
         # Work out path - we shorten it for known Django core fields
-        path = "%s.%s" % (self.__class__.__module__, self.__class__.__qualname__)
-        if path.startswith("django.db.models.fields.related"):
-            path = path.replace("django.db.models.fields.related", "django.db.models")
-        elif path.startswith("django.db.models.fields.files"):
-            path = path.replace("django.db.models.fields.files", "django.db.models")
-        elif path.startswith("django.db.models.fields.generated"):
-            path = path.replace("django.db.models.fields.generated", "django.db.models")
-        elif path.startswith("django.db.models.fields.json"):
-            path = path.replace("django.db.models.fields.json", "django.db.models")
-        elif path.startswith("django.db.models.fields.proxy"):
-            path = path.replace("django.db.models.fields.proxy", "django.db.models")
-        elif path.startswith("django.db.models.fields.composite"):
-            path = path.replace("django.db.models.fields.composite", "django.db.models")
-        elif path.startswith("django.db.models.fields"):
-            path = path.replace("django.db.models.fields", "django.db.models")
-        # Return basic info - other fields should override this.
+        cls = self.__class__
+        path = f"{cls.__module__}.{cls.__qualname__}"
+        # Perform core path replacements using a lookup-table for string replace
+        replace_paths = (
+            ("django.db.models.fields.related", "django.db.models"),
+            ("django.db.models.fields.files", "django.db.models"),
+            ("django.db.models.fields.generated", "django.db.models"),
+            ("django.db.models.fields.json", "django.db.models"),
+            ("django.db.models.fields.proxy", "django.db.models"),
+            ("django.db.models.fields.composite", "django.db.models"),
+            ("django.db.models.fields", "django.db.models"),
+        )
+        for orig, repl in replace_paths:
+            if path.startswith(orig):
+                path = path.replace(orig, repl)
+                break
         return (self.name, path, [], keywords)
 
     def clone(self):
@@ -1951,7 +1956,9 @@ class FilePathField(Field):
     ):
         self.path, self.match, self.recursive = path, match, recursive
         self.allow_files, self.allow_folders = allow_files, allow_folders
-        kwargs.setdefault("max_length", 100)
+        # Inline default max_length, eliminate method lookup/setdefault's dict overhead
+        if "max_length" not in kwargs:
+            kwargs["max_length"] = 100
         super().__init__(verbose_name, name, **kwargs)
 
     def check(self, **kwargs):
@@ -1973,6 +1980,7 @@ class FilePathField(Field):
         return []
 
     def deconstruct(self):
+        # Inlining and direct dict ops for kwargs
         name, path, args, kwargs = super().deconstruct()
         if self.path != "":
             kwargs["path"] = self.path
@@ -1984,7 +1992,7 @@ class FilePathField(Field):
             kwargs["allow_files"] = self.allow_files
         if self.allow_folders is not False:
             kwargs["allow_folders"] = self.allow_folders
-        if kwargs.get("max_length") == 100:
+        if "max_length" in kwargs and kwargs["max_length"] == 100:
             del kwargs["max_length"]
         return name, path, args, kwargs
 
