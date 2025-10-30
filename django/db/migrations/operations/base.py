@@ -69,10 +69,11 @@ class Operation:
         under django.db.migrations), positional arguments, and keyword
         arguments.
         """
+        args, kwargs = self._constructor_args
         return (
             self.__class__.__name__,
-            self._constructor_args[0],
-            self._constructor_args[1],
+            args,
+            kwargs,
         )
 
     def state_forwards(self, app_label, state):
