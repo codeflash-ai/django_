@@ -82,112 +82,131 @@ def lazy(func, *resultclasses):
     function is evaluated on every access.
     """
 
-    class __proxy__(Promise):
-        """
-        Encapsulate a function call and act as a proxy for methods that are
-        called on the result of that function. The function is not evaluated
-        until one of the methods on the result is called.
-        """
+    # Instead of building proxy methods on every call to lazy, build a class
+    # factory which caches already constructed proxy classes per
+    # (func, resultclasses) combination.
+    # This substantially improves speed for repeated lazy() invocations.
 
-        def __init__(self, args, kw):
-            self._args = args
-            self._kw = kw
+    # Use the outermost dict to cache combinations of resultclasses
+    _proxy_class_cache = (
+        lazy._proxy_class_cache if hasattr(lazy, "_proxy_class_cache") else {}
+    )
+    lazy._proxy_class_cache = _proxy_class_cache
 
-        def __reduce__(self):
-            return (
-                _lazy_proxy_unpickle,
-                (func, self._args, self._kw, *resultclasses),
-            )
+    cache_key = (func, resultclasses)
+    try:
+        __proxy__ = _proxy_class_cache[cache_key]
+    except KeyError:
+        # Build the new proxy class only once per (func, resultclasses)
+        class __proxy__(Promise):
+            """
+            Encapsulate a function call and act as a proxy for methods that are
+            called on the result of that function. The function is not evaluated
+            until one of the methods on the result is called.
+            """
 
-        def __deepcopy__(self, memo):
-            # Instances of this class are effectively immutable. It's just a
-            # collection of functions. So we don't need to do anything
-            # complicated for copying.
-            memo[id(self)] = self
-            return self
+            __slots__ = ("_args", "_kw")  # Reduce memory usage
 
-        def __cast(self):
-            return func(*self._args, **self._kw)
+            def __init__(self, args, kw):
+                self._args = args
+                self._kw = kw
 
-        # Explicitly wrap methods which are defined on object and hence would
-        # not have been overloaded by the loop over resultclasses below.
+            def __reduce__(self):
+                return (
+                    _lazy_proxy_unpickle,
+                    (func, self._args, self._kw, *resultclasses),
+                )
 
-        def __repr__(self):
-            return repr(self.__cast())
+            def __deepcopy__(self, memo):
+                memo[id(self)] = self
+                return self
 
-        def __str__(self):
-            return str(self.__cast())
+            def __cast(self):
+                return func(*self._args, **self._kw)
 
-        def __eq__(self, other):
-            if isinstance(other, Promise):
-                other = other.__cast()
-            return self.__cast() == other
+            def __repr__(self):
+                return repr(self.__cast())
 
-        def __ne__(self, other):
-            if isinstance(other, Promise):
-                other = other.__cast()
-            return self.__cast() != other
+            def __str__(self):
+                return str(self.__cast())
 
-        def __lt__(self, other):
-            if isinstance(other, Promise):
-                other = other.__cast()
-            return self.__cast() < other
+            def __eq__(self, other):
+                if isinstance(other, Promise):
+                    other = other.__cast()
+                return self.__cast() == other
 
-        def __le__(self, other):
-            if isinstance(other, Promise):
-                other = other.__cast()
-            return self.__cast() <= other
+            def __ne__(self, other):
+                if isinstance(other, Promise):
+                    other = other.__cast()
+                return self.__cast() != other
 
-        def __gt__(self, other):
-            if isinstance(other, Promise):
-                other = other.__cast()
-            return self.__cast() > other
+            def __lt__(self, other):
+                if isinstance(other, Promise):
+                    other = other.__cast()
+                return self.__cast() < other
 
-        def __ge__(self, other):
-            if isinstance(other, Promise):
-                other = other.__cast()
-            return self.__cast() >= other
+            def __le__(self, other):
+                if isinstance(other, Promise):
+                    other = other.__cast()
+                return self.__cast() <= other
 
-        def __hash__(self):
-            return hash(self.__cast())
+            def __gt__(self, other):
+                if isinstance(other, Promise):
+                    other = other.__cast()
+                return self.__cast() > other
 
-        def __format__(self, format_spec):
-            return format(self.__cast(), format_spec)
+            def __ge__(self, other):
+                if isinstance(other, Promise):
+                    other = other.__cast()
+                return self.__cast() >= other
 
-        # Explicitly wrap methods which are required for certain operations on
-        # int/str objects to function correctly.
+            def __hash__(self):
+                return hash(self.__cast())
 
-        def __add__(self, other):
-            return self.__cast() + other
+            def __format__(self, format_spec):
+                return format(self.__cast(), format_spec)
 
-        def __radd__(self, other):
-            return other + self.__cast()
+            def __add__(self, other):
+                return self.__cast() + other
 
-        def __mod__(self, other):
-            return self.__cast() % other
+            def __radd__(self, other):
+                return other + self.__cast()
 
-        def __mul__(self, other):
-            return self.__cast() * other
+            def __mod__(self, other):
+                return self.__cast() % other
 
-    # Add wrappers for all methods from resultclasses which haven't been
-    # wrapped explicitly above.
-    for resultclass in resultclasses:
-        for type_ in resultclass.mro():
-            for method_name in type_.__dict__:
-                # All __promise__ return the same wrapper method, they look up
-                # the correct implementation when called.
-                if hasattr(__proxy__, method_name):
-                    continue
+            def __mul__(self, other):
+                return self.__cast() * other
 
-                # Builds a wrapper around some method. Pass method_name to
-                # avoid issues due to late binding.
-                def __wrapper__(self, *args, __method_name=method_name, **kw):
-                    # Automatically triggers the evaluation of a lazy value and
-                    # applies the given method of the result type.
-                    result = func(*self._args, **self._kw)
-                    return getattr(result, __method_name)(*args, **kw)
+        # Bulk up the set of explicitly wrapped attributes for speed
+        # Make a fast set of methods already present to avoid O(n) hasattr
+        _existing = set(dir(__proxy__))
+        # To avoid lots of set lookups and redundant hasattr checks,
+        # use set difference on the class dict keys
 
-                setattr(__proxy__, method_name, __wrapper__)
+        # Collect all method names that need to be wrapped
+        additional_methods = set()
+        for resultclass in resultclasses:
+            for type_ in resultclass.mro():
+                additional_methods.update(type_.__dict__)
+
+        missing_methods = additional_methods - _existing
+
+        # Pre-build all wrappers once and use closure default values
+        # to avoid late binding (capture method_name)
+        def make_wrapper(method_name):
+            def __wrapper__(self, *args, **kw):
+                result = func(*self._args, **self._kw)
+                return getattr(result, method_name)(*args, **kw)
+
+            __wrapper__.__name__ = method_name
+            return __wrapper__
+
+        # Set all missing wrapped methods on the proxy class only once
+        for method_name in missing_methods:
+            setattr(__proxy__, method_name, make_wrapper(method_name))
+
+        _proxy_class_cache[cache_key] = __proxy__
 
     @wraps(func)
     def __wrapper__(*args, **kw):
