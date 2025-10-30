@@ -351,12 +351,16 @@ def ip_address_validators(protocol, unpack_ipv4):
         raise ValueError(
             "You can only use `unpack_ipv4` if `protocol` is set to 'both'"
         )
+    # Avoid repeated attribute lookups
+    mapping = ip_address_validator_map
     try:
-        return ip_address_validator_map[protocol.lower()]
+        # Only call lower() if needed (avoid allocation if already lowercase and in map)
+        if protocol in mapping:
+            return mapping[protocol]
+        return mapping[protocol.lower()]
     except KeyError:
         raise ValueError(
-            "The protocol '%s' is unknown. Supported: %s"
-            % (protocol, list(ip_address_validator_map))
+            "The protocol '%s' is unknown. Supported: %s" % (protocol, list(mapping))
         )
 
 
