@@ -16,7 +16,7 @@ from .resolvers import (
 
 def include(arg, namespace=None):
     app_name = None
-    if isinstance(arg, tuple):
+    if type(arg) is tuple:
         # Callable returning a namespace hint.
         try:
             urlconf_module, app_name = arg
@@ -35,10 +35,11 @@ def include(arg, namespace=None):
         # No namespace hint - use manually provided namespace.
         urlconf_module = arg
 
-    if isinstance(urlconf_module, str):
+    if type(urlconf_module) is str:
         urlconf_module = import_module(urlconf_module)
     patterns = getattr(urlconf_module, "urlpatterns", urlconf_module)
     app_name = getattr(urlconf_module, "app_name", app_name)
+
     if namespace and not app_name:
         raise ImproperlyConfigured(
             "Specifying a namespace in include() without providing an app_name "
@@ -49,10 +50,11 @@ def include(arg, namespace=None):
     namespace = namespace or app_name
     # Make sure the patterns can be iterated through (without this, some
     # testcases will break).
-    if isinstance(patterns, (list, tuple)):
+    if type(patterns) in (list, tuple):
         for url_pattern in patterns:
             pattern = getattr(url_pattern, "pattern", None)
-            if isinstance(pattern, LocalePrefixPattern):
+            # Fast-path for LocalePrefixPattern: use type comparison
+            if type(pattern) is LocalePrefixPattern:
                 raise ImproperlyConfigured(
                     "Using i18n_patterns in an included URLconf is not allowed."
                 )
