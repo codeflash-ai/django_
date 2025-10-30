@@ -104,9 +104,10 @@ class Lookup(Expression):
         return ("%s", (value,))
 
     def process_lhs(self, compiler, connection, lhs=None):
-        lhs = lhs or self.lhs
-        if hasattr(lhs, "resolve_expression"):
-            lhs = lhs.resolve_expression(compiler.query)
+        lhs = lhs if lhs is not None else self.lhs
+        resolve_expr = getattr(lhs, "resolve_expression", None)
+        if resolve_expr:
+            lhs = resolve_expr(compiler.query)
         sql, params = compiler.compile(lhs)
         if isinstance(lhs, Lookup):
             # Wrapped in parentheses to respect operator precedence.
@@ -115,14 +116,20 @@ class Lookup(Expression):
 
     def process_rhs(self, compiler, connection):
         value = self.rhs
-        if self.bilateral_transforms:
+        bilateral_transforms = self.bilateral_transforms
+        if bilateral_transforms:
+            # Check direct value before transforming
             if self.rhs_is_direct_value():
                 # Do not call get_db_prep_lookup here as the value will be
                 # transformed before being used for lookup
                 value = Value(value, output_field=self.lhs.output_field)
-            value = self.apply_bilateral_transforms(value)
-            value = value.resolve_expression(compiler.query)
-        if hasattr(value, "as_sql"):
+            for transform in bilateral_transforms:
+                value = transform(value)
+            resolve_expr = getattr(value, "resolve_expression", None)
+            if resolve_expr:
+                value = resolve_expr(compiler.query)
+        as_sql = getattr(value, "as_sql", None)
+        if as_sql:
             sql, params = compiler.compile(value)
             if isinstance(value, ColPairs):
                 raise ValueError(
@@ -132,7 +139,7 @@ class Lookup(Expression):
             # precedence but avoid double wrapping as it can be misinterpreted
             # on some backends (e.g. subqueries on SQLite).
             if not isinstance(value, Value) and sql and sql[0] != "(":
-                sql = "(%s)" % sql
+                sql = f"({sql})"
             return sql, params
         else:
             return self.get_db_prep_lookup(value, connection)

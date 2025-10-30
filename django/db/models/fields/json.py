@@ -157,9 +157,10 @@ class DataContains(FieldGetDbPrepValueMixin, PostgresOperatorLookup):
             raise NotSupportedError(
                 "contains lookup is not supported on this database backend."
             )
+        # Directly combine params for efficiency
         lhs, lhs_params = self.process_lhs(compiler, connection)
         rhs, rhs_params = self.process_rhs(compiler, connection)
-        params = tuple(lhs_params) + tuple(rhs_params)
+        params = lhs_params + rhs_params  # Avoid unnecessary tuple conversion
         return "JSON_CONTAINS(%s, %s)" % (lhs, rhs), params
 
 
