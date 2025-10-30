@@ -35,19 +35,25 @@ def resolve_callables(mapping):
 
 
 def unpickle_named_row(names, values):
-    return create_namedtuple_class(*names)(*values)
+    # Avoid star-unpacking for slightly tighter call
+    nt_cls = create_namedtuple_class(*names)
+    return nt_cls._make(values)
 
 
 @functools.lru_cache
 def create_namedtuple_class(*names):
-    # Cache type() with @lru_cache since it's too slow to be called for every
-    # QuerySet evaluation.
+    # Cache the namedtuple class directly to avoid repeated namedtuple("Row", names) call
+    base = namedtuple("Row", names)
+
+    # __reduce__ stays as previously defined
     def __reduce__(self):
         return unpickle_named_row, (names, tuple(self))
 
+    # Avoid using type() directly and rely on namedtuple's type (faster)
+    # But still need to create the new type for proper __reduce__ and __slots__
     return type(
         "Row",
-        (namedtuple("Row", names),),
+        (base,),
         {"__reduce__": __reduce__, "__slots__": ()},
     )
 
