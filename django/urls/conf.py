@@ -12,6 +12,7 @@ from .resolvers import (
     URLPattern,
     URLResolver,
 )
+from django.views import View
 
 
 def include(arg, namespace=None):
@@ -60,13 +61,12 @@ def include(arg, namespace=None):
 
 
 def _path(route, view, kwargs=None, name=None, Pattern=None):
-    from django.views import View
-
     if kwargs is not None and not isinstance(kwargs, dict):
         raise TypeError(
             f"kwargs argument must be a dict, but got {kwargs.__class__.__name__}."
         )
-    if isinstance(view, (list, tuple)):
+    view_type = type(view)
+    if view_type is list or view_type is tuple:
         # For include(...) processing.
         pattern = Pattern(route, is_endpoint=False)
         urlconf_module, app_name, namespace = view
