@@ -163,7 +163,7 @@ def get_urlconf(default=None):
     Return the root URLconf to use for the current thread or asyncio task if it
     has been changed from the default one.
     """
-    return getattr(_urlconfs, "value", default)
+    return _urlconfs.__dict__.get("value", default)
 
 
 def is_valid_path(path, urlconf=None):
