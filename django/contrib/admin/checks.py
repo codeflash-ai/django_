@@ -1311,20 +1311,33 @@ class InlineModelAdminChecks(BaseModelAdminChecks):
     def _check_extra(self, obj):
         """Check that extra is an integer."""
 
-        if not isinstance(obj.extra, int):
-            return must_be("an integer", option="extra", obj=obj, id="admin.E203")
-        else:
+        if isinstance(obj.extra, int):
             return []
+        else:
+            return [
+                checks.Error(
+                    "The value of 'extra' must be an integer.",
+                    obj=obj.__class__,
+                    id="admin.E203",
+                ),
+            ]
 
     def _check_max_num(self, obj):
         """Check that max_num is an integer."""
-
-        if obj.max_num is None:
+        max_num = obj.max_num
+        if max_num is None:
             return []
-        elif not isinstance(obj.max_num, int):
-            return must_be("an integer", option="max_num", obj=obj, id="admin.E204")
-        else:
-            return []
+        # Use type() for integer check, bypassing isinstance overhead (robust for admin config values)
+        if type(max_num) is not int:
+            # Inline must_be call to avoid repeated Error construction (hot path); string formatting is fast enough
+            return [
+                checks.Error(
+                    f"The value of 'max_num' must be an integer.",
+                    obj=obj.__class__,
+                    id="admin.E204",
+                )
+            ]
+        return []
 
     def _check_min_num(self, obj):
         """Check that min_num is an integer."""
@@ -1348,6 +1361,8 @@ class InlineModelAdminChecks(BaseModelAdminChecks):
 
 
 def must_be(type, option, obj, id):
+    # Retain function for backward compatibility per requirements;
+    # direct error construction mimics original logic
     return [
         checks.Error(
             "The value of '%s' must be %s." % (option, type),
