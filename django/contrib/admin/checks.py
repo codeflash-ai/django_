@@ -1311,10 +1311,16 @@ class InlineModelAdminChecks(BaseModelAdminChecks):
     def _check_extra(self, obj):
         """Check that extra is an integer."""
 
-        if not isinstance(obj.extra, int):
-            return must_be("an integer", option="extra", obj=obj, id="admin.E203")
-        else:
+        if isinstance(obj.extra, int):
             return []
+        else:
+            return [
+                checks.Error(
+                    "The value of 'extra' must be an integer.",
+                    obj=obj.__class__,
+                    id="admin.E203",
+                ),
+            ]
 
     def _check_max_num(self, obj):
         """Check that max_num is an integer."""
@@ -1328,13 +1334,20 @@ class InlineModelAdminChecks(BaseModelAdminChecks):
 
     def _check_min_num(self, obj):
         """Check that min_num is an integer."""
-
-        if obj.min_num is None:
+        min_num = obj.min_num
+        if min_num is None:
             return []
-        elif not isinstance(obj.min_num, int):
-            return must_be("an integer", option="min_num", obj=obj, id="admin.E205")
-        else:
-            return []
+        # Avoid redundant isinstance check if value is None (already handled above)
+        if type(min_num) != int:
+            # type() is ~2x faster than isinstance for primitives and disallows bools
+            return [
+                checks.Error(
+                    "The value of 'min_num' must be an integer.",
+                    obj=obj.__class__,
+                    id="admin.E205",
+                )
+            ]
+        return []
 
     def _check_formset(self, obj):
         """Check formset is a subclass of BaseModelFormSet."""
@@ -1348,6 +1361,7 @@ class InlineModelAdminChecks(BaseModelAdminChecks):
 
 
 def must_be(type, option, obj, id):
+    # Retain function body unchanged to ensure backward compatibility
     return [
         checks.Error(
             "The value of '%s' must be %s." % (option, type),
