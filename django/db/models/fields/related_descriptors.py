@@ -682,7 +682,13 @@ class ReverseManyToOneDescriptor:
         if instance is None:
             return self
 
-        return self.related_manager_cls(instance)
+        cache_name = f"_{self.field.name}_reverse_manager_cache"
+        try:
+            return instance.__dict__[cache_name]
+        except KeyError:
+            manager = self.related_manager_cls(instance)
+            instance.__dict__[cache_name] = manager
+            return manager
 
     def _get_set_deprecation_msg_params(self):
         return (
