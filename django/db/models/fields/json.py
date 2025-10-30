@@ -118,7 +118,7 @@ class JSONField(CheckFieldDefaultMixin, Field):
         return super().get_db_prep_save(value, connection)
 
     def get_transform(self, name):
-        transform = super().get_transform(name)
+        transform = Field.get_transform(self, name)
         if transform:
             return transform
         return KeyTransformFactory(name)
