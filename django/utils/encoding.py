@@ -95,10 +95,17 @@ def force_bytes(s, encoding="utf-8", strings_only=False, errors="strict"):
     if isinstance(s, bytes):
         if encoding == "utf-8":
             return s
-        else:
-            return s.decode("utf-8", errors).encode(encoding, errors)
+        return s.decode("utf-8", errors).encode(encoding, errors)
+
+    # Handle protected types early to avoid extra checks/conversions
     if strings_only and is_protected_type(s):
         return s
+
+    # Faster path for strings (str)
+    if isinstance(s, str):
+        return s.encode(encoding, errors)
+
+    # Memoryview case, which is rare
     if isinstance(s, memoryview):
         return bytes(s)
     return str(s).encode(encoding, errors)
