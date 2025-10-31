@@ -92,8 +92,10 @@ def b64_encode(s):
 
 
 def b64_decode(s):
-    pad = b"=" * (-len(s) % 4)
-    return base64.urlsafe_b64decode(s + pad)
+    rem = len(s) & 3
+    if rem:
+        s = s + b"==="[: 4 - rem]
+    return base64.urlsafe_b64decode(s)
 
 
 def base64_hmac(salt, value, key, algorithm="sha1"):
